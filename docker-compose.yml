@@ -1,0 +1,31 @@
+services:
+  mysql:
+    image: mysql:8.4
+    platform: linux/arm64/v8    # good for M1/M2
+    container_name: voter-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: supersecret
+      MYSQL_DATABASE: voterdb
+      TZ: Asia/Kolkata
+    command: [
+      "--character-set-server=utf8mb4",
+      "--collation-server=utf8mb4_unicode_ci",
+      "--skip-log-bin"
+    ]
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  # adminer:
+  #   image: adminer:latest
+  #   container_name: voter-adminer
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8080:8080"
+  #   depends_on:
+  #     - mysql
+
+volumes:
+  mysql_data:
