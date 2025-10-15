@@ -4,10 +4,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
-import { Search, Plus, Upload, X, ChevronLeft, ChevronRight, Filter, Eye, Trash2, CheckCircle, Star, User, Skull } from "lucide-react";
+import {
+  Search, Plus, Upload, X, ChevronLeft, ChevronRight, Filter, Eye, Trash2,
+  CheckCircle, User
+} from "lucide-react";
 
 type Gender = "M" | "F" | "O";
 type ColourCode = "OUR" | "OPPOSITE" | "DOUBTFUL" | "OTHER";
+type FamilyIdType = "JAN_AADHAAR_FAMILY_ID" | "RATION_CARD_NO" | "OTHER";
+type FamilyRole = "HEAD" | "SPOUSE" | "CHILD" | "PARENT" | "SIBLING" | "OTHER";
 
 type VoterListItem = {
   id: string;
@@ -45,19 +50,10 @@ function Modal({
   return (
     <>
       <style jsx>{`
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes slideUp {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
         }
         .fade-in { animation: fadeIn 0.2s ease-out; }
         .slide-up { animation: slideUp 0.3s ease-out; }
@@ -122,7 +118,8 @@ export default function HomeClient() {
   useEffect(() => {
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(() => {
-      setDebouncedQ(q.trim());
+      const next = q.trim();
+      setDebouncedQ(next);
       setPage(1);
     }, 300);
     return () => {
@@ -139,7 +136,8 @@ export default function HomeClient() {
     if (starVoter) usp.set("starVoter", starVoter);
     if (dead) usp.set("dead", dead);
     usp.set("page", String(page));
-    router.replace(`${pathname}?${usp.toString()}`);
+    const qs = usp.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
   }, [debouncedQ, colourCode, voted, starVoter, dead, page, router, pathname]);
 
   // ---------- fetch list ----------
@@ -161,13 +159,13 @@ export default function HomeClient() {
       });
       const j = await res.json().catch(() => ({}));
       if (res.ok) {
-        setItems(j.items ?? []);
-        setTotal(j.total ?? 0);
+        setItems(Array.isArray(j.items) ? j.items : []);
+        setTotal(Number.isFinite(j.total) ? j.total : 0);
       } else {
         setItems([]);
         setTotal(0);
       }
-    } catch {
+    } catch (err: any) {
       if (!signal?.aborted) {
         setItems([]);
         setTotal(0);
@@ -188,6 +186,7 @@ export default function HomeClient() {
   const [adding, setAdding] = useState(false);
   const [addErr, setAddErr] = useState<string | null>(null);
   const [form, setForm] = useState({
+    // core
     name: "",
     voterId: "",
     age: "",
@@ -208,23 +207,21 @@ export default function HomeClient() {
     dead: false,
     caste: "",
     profession: "",
-    personnel: "",
-    society: "",
-    flatNo: "",
-    newAddress: "",
     demands: "",
-    extraInfo1: "",
-    extraInfo2: "",
-    extraInfo3: "",
-    extraInfo4: "",
-    extraInfo5: "",
-    extraCheck1: false,
-    extraCheck2: false,
+    extraInfo: "",       // <-- single flexible note (new schema)
     dob: "",
+    // family (new schema)
+    familyId: "",
+    familyIdType: "" as "" | FamilyIdType,
+    relationToHead: "" as "" | FamilyRole,
+    headId: "", // numeric voter id as string (optional)
   });
   function setF<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
     setForm((s) => ({ ...s, [k]: v }));
   }
+
+  // helpers to coerce numbers safely (avoid NaN)
+  const numOrNull = (v: string) => (v && /^\d+$/.test(v) ? Number(v) : null);
 
   async function onAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -234,15 +231,15 @@ export default function HomeClient() {
       const payload: any = {
         name: form.name.trim(),
         voterId: form.voterId.trim() || null,
-        age: form.age ? Number(form.age) : null,
+        age: numOrNull(form.age),
         gender: form.gender || null,
         village: form.village.trim() || null,
         houseNo: form.houseNo.trim() || null,
         address: form.address.trim() || null,
         boothName: form.boothName.trim() || null,
-        boothNo: form.boothNo ? Number(form.boothNo) : null,
-        partNo: form.partNo ? Number(form.partNo) : null,
-        srn: form.srn ? Number(form.srn) : null,
+        boothNo: numOrNull(form.boothNo),
+        partNo: numOrNull(form.partNo),
+        srn: numOrNull(form.srn),
         mobile1: form.mobile1.trim() || null,
         mobile2: form.mobile2.trim() || null,
         email: form.email.trim() || null,
@@ -252,19 +249,14 @@ export default function HomeClient() {
         dead: !!form.dead,
         caste: form.caste.trim() || null,
         profession: form.profession.trim() || null,
-        personnel: form.personnel.trim() || null,
-        society: form.society.trim() || null,
-        flatNo: form.flatNo.trim() || null,
-        newAddress: form.newAddress.trim() || null,
         demands: form.demands.trim() || null,
-        extraInfo1: form.extraInfo1.trim() || null,
-        extraInfo2: form.extraInfo2.trim() || null,
-        extraInfo3: form.extraInfo3.trim() || null,
-        extraInfo4: form.extraInfo4.trim() || null,
-        extraInfo5: form.extraInfo5.trim() || null,
-        extraCheck1: form.extraCheck1,
-        extraCheck2: form.extraCheck2,
-        dob: form.dob || null,
+        extraInfo: form.extraInfo.trim() || null,
+        dob: form.dob || null, // ISO yyyy-mm-dd
+        // family fields (all optional)
+        familyId: form.familyId.trim() || null,
+        familyIdType: form.familyIdType || null,
+        relationToHead: form.relationToHead || null,
+        headId: form.headId.trim() ? form.headId.trim() : null, // API accepts string/number/null
       };
 
       const res = await fetch("/api/voters", {
@@ -284,6 +276,7 @@ export default function HomeClient() {
         return;
       }
 
+      // reset
       setForm({
         name: "",
         voterId: "",
@@ -305,19 +298,13 @@ export default function HomeClient() {
         dead: false,
         caste: "",
         profession: "",
-        personnel: "",
-        society: "",
-        flatNo: "",
-        newAddress: "",
         demands: "",
-        extraInfo1: "",
-        extraInfo2: "",
-        extraInfo3: "",
-        extraInfo4: "",
-        extraInfo5: "",
-        extraCheck1: false,
-        extraCheck2: false,
+        extraInfo: "",
         dob: "",
+        familyId: "",
+        familyIdType: "",
+        relationToHead: "",
+        headId: "",
       });
       setAddOpen(false);
       setPage(1);
@@ -374,15 +361,17 @@ export default function HomeClient() {
     setDeleteErr(null);
     try {
       const res = await fetch(`/api/voters/${id}`, { method: "DELETE" });
-      if (!res.ok) {
+      let ok = res.ok;
+      if (!ok) {
         const j = await res.json().catch(() => ({}));
         setDeleteErr(j.error || "Delete failed");
-        return;
       }
       const remaining = items.length - 1;
-      if (remaining <= 0 && page > 1) setPage(page - 1);
-      await loadList();
-      setDeleteIntent(null);
+      if (ok) {
+        if (remaining <= 0 && page > 1) setPage(page - 1);
+        await loadList();
+        setDeleteIntent(null);
+      }
     } catch (e: any) {
       setDeleteErr(e?.message || "Delete failed");
     } finally {
@@ -451,7 +440,7 @@ export default function HomeClient() {
               </span>
             )}
           </div>
-          
+
           <select
             className="px-3 py-2 border-2 border-gray-200 rounded-lg focus:border-[#EF3340] focus:outline-none text-sm"
             value={colourCode}
@@ -463,7 +452,7 @@ export default function HomeClient() {
             <option value="DOUBTFUL">Doubtful</option>
             <option value="OTHER">Other</option>
           </select>
-          
+
           <select
             className="px-3 py-2 border-2 border-gray-200 rounded-lg focus:border-[#EF3340] focus:outline-none text-sm"
             value={voted}
@@ -473,7 +462,7 @@ export default function HomeClient() {
             <option value="1">Voted</option>
             <option value="0">Not Voted</option>
           </select>
-          
+
           <select
             className="px-3 py-2 border-2 border-gray-200 rounded-lg focus:border-[#EF3340] focus:outline-none text-sm"
             value={starVoter}
@@ -483,7 +472,7 @@ export default function HomeClient() {
             <option value="1">Star Voters</option>
             <option value="0">Regular</option>
           </select>
-          
+
           <select
             className="px-3 py-2 border-2 border-gray-200 rounded-lg focus:border-[#EF3340] focus:outline-none text-sm"
             value={dead}
@@ -738,34 +727,55 @@ export default function HomeClient() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Caste" value={form.caste} onChange={(e) => setF("caste", e.target.value)} />
               <input className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Profession" value={form.profession} onChange={(e) => setF("profession", e.target.value)} />
-              <input className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Personnel" value={form.personnel} onChange={(e) => setF("personnel", e.target.value)} />
-              <input className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Society" value={form.society} onChange={(e) => setF("society", e.target.value)} />
-              <input className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Flat No." value={form.flatNo} onChange={(e) => setF("flatNo", e.target.value)} />
-              <input className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="New Address" value={form.newAddress} onChange={(e) => setF("newAddress", e.target.value)} />
               <input className="col-span-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Demands" value={form.demands} onChange={(e) => setF("demands", e.target.value)} />
+              <input className="col-span-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Extra Info / Notes" value={form.extraInfo} onChange={(e) => setF("extraInfo", e.target.value)} />
             </div>
           </div>
 
-          {/* Extra Fields */}
+          {/* Family (New Schema) */}
           <div>
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">Extra Fields</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <input className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Extra Info 1" value={form.extraInfo1} onChange={(e) => setF("extraInfo1", e.target.value)} />
-              <input className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Extra Info 2" value={form.extraInfo2} onChange={(e) => setF("extraInfo2", e.target.value)} />
-              <input className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Extra Info 3" value={form.extraInfo3} onChange={(e) => setF("extraInfo3", e.target.value)} />
-              <input className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Extra Info 4" value={form.extraInfo4} onChange={(e) => setF("extraInfo4", e.target.value)} />
-              <input className="col-span-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none" placeholder="Extra Info 5" value={form.extraInfo5} onChange={(e) => setF("extraInfo5", e.target.value)} />
-              <div className="col-span-full flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-[#EF3340] focus:ring-[#EF3340]" checked={form.extraCheck1} onChange={(e) => setF("extraCheck1", e.target.checked)} />
-                  <span className="text-sm text-gray-700">Extra Check 1</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-[#EF3340] focus:ring-[#EF3340]" checked={form.extraCheck2} onChange={(e) => setF("extraCheck2", e.target.checked)} />
-                  <span className="text-sm text-gray-700">Extra Check 2</span>
-                </label>
-              </div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Family (Optional)</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              <input
+                className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none"
+                placeholder="Family ID (e.g., Jan Aadhaar / Ration)"
+                value={form.familyId}
+                onChange={(e) => setF("familyId", e.target.value)}
+              />
+              <select
+                className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none"
+                value={form.familyIdType}
+                onChange={(e) => setF("familyIdType", e.target.value as any)}
+              >
+                <option value="">Family ID Type</option>
+                <option value="JAN_AADHAAR_FAMILY_ID">Jan Aadhaar Family Id</option>
+                <option value="RATION_CARD_NO">Ration Card No</option>
+                <option value="OTHER">Other</option>
+              </select>
+              <select
+                className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none"
+                value={form.relationToHead}
+                onChange={(e) => setF("relationToHead", e.target.value as any)}
+              >
+                <option value="">Relation to Head</option>
+                <option value="HEAD">Head</option>
+                <option value="SPOUSE">Spouse</option>
+                <option value="CHILD">Child</option>
+                <option value="PARENT">Parent</option>
+                <option value="SIBLING">Sibling</option>
+                <option value="OTHER">Other</option>
+              </select>
+              <input
+                className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none"
+                placeholder="Head Voter ID (numeric)"
+                inputMode="numeric"
+                value={form.headId}
+                onChange={(e) => setF("headId", e.target.value.replace(/\D/g, ""))}
+              />
             </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Tip: If you set relation as <b>HEAD</b>, you can leave <i>Head Voter ID</i> blank.
+            </p>
           </div>
 
           {/* Submit */}
@@ -798,7 +808,9 @@ export default function HomeClient() {
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
             <p className="text-sm text-blue-800 font-medium mb-2">Accepted Headers:</p>
             <p className="text-xs text-blue-700">
-              name, village, voterId, phone/mobile, mobile2, colourCode, voted, starVoter, dead, boothNo, partNo, srn, age, gender, address, email, etc.
+              name, village, voterId, phone/mobile, mobile2, colourCode, voted, starVoter, dead, boothNo, partNo, srn, age, gender, address, email,
+              <br />
+              <b>familyId</b>, <b>familyIdType</b>, <b>relationToHead</b>, <b>headId</b>, extraInfo, caste, profession, demands, dob
             </p>
           </div>
 

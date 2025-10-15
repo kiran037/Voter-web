@@ -48,7 +48,16 @@ enum UserRole {
   STAFF
 }
 
-enum KinRelation {
+/// Optional classification for which kind of Family ID you're storing
+enum FamilyIdType {
+  JAN_AADHAAR_FAMILY_ID
+  RATION_CARD_NO
+  OTHER
+}
+
+/// Role (optional) relative to the chosen head in the same familyId
+enum FamilyRole {
+  HEAD
   SPOUSE
   CHILD
   PARENT
@@ -62,7 +71,7 @@ enum KinRelation {
 
 model User {
   id              BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
-  phone           String    @unique @db.VarChar(20) // E.164 e.g. +9198xxxxxxx
+  phone           String    @unique @db.VarChar(20) // E.164 (e.g., +9198xxxxxxx)
   name            String?   @db.VarChar(191)
   role            UserRole  @default(STAFF)
   phoneVerifiedAt DateTime?
@@ -78,8 +87,7 @@ model AuthOtp {
   id         BigInt     @id @default(autoincrement()) @db.UnsignedBigInt
   phone      String     @db.VarChar(20)
   purpose    OtpPurpose @default(LOGIN)
-  // Store only hashed OTP; never store raw codes
-  codeHash   String     @db.VarChar(191)
+  codeHash   String     @db.VarChar(191) // store hash, never raw
   expiresAt  DateTime
   consumedAt DateTime?
   attempts   Int        @default(0) @db.UnsignedInt
@@ -100,7 +108,7 @@ model Voter {
 
   // List / Details tab
   name    String  @db.VarChar(191)
-  voterId String? @unique(map: "uniq_voterId") @db.VarChar(64) // keep nullable if some rows miss it
+  voterId String? @unique(map: "uniq_voterId") @db.VarChar(64) // nullable if some rows miss it
   age     Int?    @db.UnsignedInt
   gender  Gender?
   village String? @db.VarChar(191)
@@ -124,58 +132,39 @@ model Voter {
   starVoter  Boolean    @default(false)
   dead       Boolean    @default(false)
 
-  // Survey tab
-  caste       String?   @db.VarChar(191)
-  profession  String?   @db.VarChar(191)
-  personnel   String?   @db.VarChar(191)
-  society     String?   @db.VarChar(191)
-  flatNo      String?   @db.VarChar(64)
-  newAddress  String?   @db.VarChar(512)
-  demands     String?   @db.VarChar(512)
-  extraInfo1  String?   @db.VarChar(512)
-  extraInfo2  String?   @db.VarChar(512)
-  extraInfo3  String?   @db.VarChar(512)
-  extraInfo4  String?   @db.VarChar(512)
-  extraInfo5  String?   @db.VarChar(512)
-  extraCheck1 Boolean?
-  extraCheck2 Boolean?
-  dob         DateTime?
+  // Survey / profiling (pruned to essentials)
+  caste      String?  @db.VarChar(191)
+  profession String?  @db.VarChar(191)
+  demands    String?  @db.VarChar(512)
+  extraInfo  String?  @db.VarChar(512) // single flexible note field
+  dob        DateTime?
+
+  // 👉 Simple family linking (all members sharing the same familyId)
+  familyId      String?       @db.VarChar(64)   // e.g., Jan Aadhaar Family ID / Ration Card No
+  familyIdType  FamilyIdType? // optional classification
+  relationToHead FamilyRole?  // optional; use "HEAD" for the designated head
+
+  // Optional: self-reference to the head voter (no hard DB guarantee that it shares same familyId)
+  headId  BigInt? @db.UnsignedBigInt
+  head    Voter?  @relation("Voter_FamilyHead", fields: [headId], references: [id])
+  members Voter[] @relation("Voter_FamilyHead") // those pointing to this voter as head
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  ImportRow     ImportRow[]
-  // Family links (self-referencing through VoterKin)
-  kinAsVoter    VoterKin[]  @relation("Voter_Kin_voter")
-  kinAsRelative VoterKin[]  @relation("Voter_Kin_relative")
+  ImportRow ImportRow[]
 
   @@index([name])
   @@index([village])
   @@index([boothNo, partNo, srn])
   @@index([mobile1])
   @@index([mobile2])
+  @@index([familyId])
+  @@index([headId])
+
   // Requires MySQL with FULLTEXT support on InnoDB (5.7+/8.0+)
   @@fulltext([name, village, address, boothName])
-}
-
-////////////////////////////////////////////////////////////
-// Family linking (self-referencing junction)
-////////////////////////////////////////////////////////////
-
-model VoterKin {
-  id         BigInt      @id @default(autoincrement()) @db.UnsignedBigInt
-  voterId    BigInt      @db.UnsignedBigInt
-  relativeId BigInt      @db.UnsignedBigInt
-  relation   KinRelation @default(OTHER)
-  notes      String?     @db.VarChar(255)
-  createdAt  DateTime    @default(now())
-
-  voter    Voter @relation("Voter_Kin_voter", fields: [voterId], references: [id])
-  relative Voter @relation("Voter_Kin_relative", fields: [relativeId], references: [id])
-
-  @@unique([voterId, relativeId, relation]) // avoid duplicates
-  @@index([relativeId])
 }
 
 ////////////////////////////////////////////////////////////
@@ -208,12 +197,15 @@ model ImportRow {
   status  ImportRowStatus @default(SKIPPED)
   error   String?         @db.VarChar(1024)
 
-  // Raw Excel row (stringified JSON) for audit/debug
+  // Raw Excel/CSV row (stringified JSON) for audit/debug
   raw String? @db.Text
 
   // Useful for dedupe/upsert logic during import
   voterIdStr String? @db.VarChar(64)
   phone1     String? @db.VarChar(20)
+  // Optional: carry the family ID that came from the sheet (helps debugging)
+  familyExternalId String? @db.VarChar(64)
+  familyIdType     FamilyIdType?
 
   // If processed to a Voter, link it
   voterId BigInt? @db.UnsignedBigInt
@@ -226,4 +218,5 @@ model ImportRow {
   @@index([batchId, status])
   @@index([voterId])
   @@index([voterIdStr])
+  @@index([familyExternalId])
 }

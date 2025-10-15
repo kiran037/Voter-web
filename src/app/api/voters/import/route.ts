@@ -1,11 +1,16 @@
+// app/api/voters/import/route.ts
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";
 import { Buffer } from "node:buffer";
+import type { Prisma, FamilyRole, ColourCode, FamilyIdType } from "@prisma/client";
 
-export const runtime = "nodejs"; // Node APIs (Buffer) + SheetJS
+export const runtime = "nodejs";
 
+// ---------------------------------------------
+// Helpers
+// ---------------------------------------------
 type Colour = "OUR" | "OPPOSITE" | "DOUBTFUL" | "OTHER";
 
 function toBool(v: unknown): boolean | null {
@@ -16,11 +21,9 @@ function toBool(v: unknown): boolean | null {
 function toColour(v: unknown): Colour | null {
   if (!v) return null;
   const s = String(v).trim().toUpperCase();
-  if (s === "OUR" || s === "OPPOSITE" || s === "DOUBTFUL" || s === "OTHER") return s as Colour;
-  return null;
+  return (["OUR","OPPOSITE","DOUBTFUL","OTHER"] as const).includes(s as Colour) ? (s as Colour) : null;
 }
 
-// --- tiny CSV splitter (supports quotes) ---
 function escCsvSplit(line: string): string[] {
   const out: string[] = [];
   let cur = "", inQ = false;
@@ -54,55 +57,140 @@ function parseCsv(buf: Buffer): Record<string, string>[] {
   return rows;
 }
 
-// --- SheetJS loader (single, reliable path) ---
-async function parseXlsx(buf: Buffer): Promise<Record<string, any>[]> {
+// XLSX loader
+async function loadSheetJS(): Promise<any | null> {
   try {
-    const mod = await import("xlsx"); // rely on package root
-    const XLSX: any = (mod as any).default?.read ? (mod as any).default : mod;
-
-    const wb = XLSX.read(buf, { type: "buffer" });
-    const sheetName = wb.SheetNames?.[0];
-    if (!sheetName) return [];
-    const sheet = wb.Sheets[sheetName];
-    return XLSX.utils.sheet_to_json(sheet, { raw: false }) as Record<string, any>[];
-  } catch (err: any) {
-    const e = new Error("XLSX parsing not available. Ensure `xlsx` is installed.");
-    (e as any).status = 400;
-    throw e;
+    // @ts-ignore
+    const m1 = await import("xlsx/xlsx.mjs");
+    return (m1 as any).read ? m1 : (m1 as any).default || m1;
+  } catch {}
+  try {
+    const m2 = await import("xlsx");
+    return (m2 as any).read ? m2 : (m2 as any).default || m2;
+  } catch {}
+  return null;
+}
+async function parseXlsx(buf: Buffer): Promise<Record<string, any>[]> {
+  const XLSX = await loadSheetJS();
+  if (!XLSX || typeof XLSX.read !== "function") {
+    const err = new Error("XLSX parser not available. Install `xlsx` and run on Node runtime.");
+    (err as any).status = 400;
+    throw err;
   }
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const sheetName = wb.SheetNames?.[0];
+  if (!sheetName) return [];
+  const sheet = wb.Sheets[sheetName];
+  return XLSX.utils.sheet_to_json(sheet, { raw: false }) as Record<string, any>[];
 }
 
-// Map input row -> voter fields expected by Prisma
-function mapRowToVoter(row: Record<string, any>) {
-  const pick = (keys: string[], def: any = null) => {
-    for (const k of keys) {
-      const found = Object.keys(row).find(rk => rk.toLowerCase() === k.toLowerCase());
-      if (found) return row[found];
-    }
-    return def;
+function pickInsensitive(row: Record<string, any>, keys: string[], def: any = null) {
+  for (const k of keys) {
+    const found = Object.keys(row).find(rk => rk.toLowerCase() === k.toLowerCase());
+    if (found) return row[found];
+  }
+  return def;
+}
+
+// Map free text -> FamilyRole enum (or null)
+function toFamilyRoleEnum(input: string | null): FamilyRole | null {
+  if (!input) return null;
+  const v = input.trim().toUpperCase();
+  const allowed = new Set<FamilyRole>(["HEAD","SPOUSE","CHILD","PARENT","SIBLING","OTHER"] as FamilyRole[]);
+  return allowed.has(v as FamilyRole) ? (v as FamilyRole) : null;
+}
+
+// Map free text -> FamilyIdType enum (or null)
+function toFamilyIdTypeEnum(input: string | null): FamilyIdType | null {
+  if (!input) return null;
+  const v = input.trim().toUpperCase();
+  const map: Record<string, FamilyIdType> = {
+    "JAN_AADHAAR_FAMILY_ID": "JAN_AADHAAR_FAMILY_ID",
+    "JAN AADHAAR FAMILY ID": "JAN_AADHAAR_FAMILY_ID",
+    "JANAADHAAR": "JAN_AADHAAR_FAMILY_ID",
+    "JAN AADHAAR": "JAN_AADHAAR_FAMILY_ID",
+    "RATION_CARD_NO": "RATION_CARD_NO",
+    "RATION CARD": "RATION_CARD_NO",
+    "RC": "RATION_CARD_NO",
+    "OTHER": "OTHER",
   };
-  const name = String(pick(["name", "full name", "voter_name"], "")).trim();
-  const village = (pick(["village", "area"], "") as string).trim() || null;
-  const voterId = (pick(["voterId", "voter_id", "epic"], "") as string).trim() || null;
-  const mobile1 = (pick(["mobile1", "phone", "mobile"], "") as string).trim() || null;
-  const mobile2 = (pick(["mobile2", "alt_phone"], "") as string).trim() || null;
-  const colourCode = toColour(pick(["colourCode", "color", "segment"], "")) ?? "OTHER";
-  const voted = toBool(pick(["voted"], "")) ?? false;
-  const starVoter = toBool(pick(["starVoter", "star"], "")) ?? false;
-  const dead = toBool(pick(["dead", "is_dead"], "")) ?? false;
+  return map[v] ?? null;
+}
+
+// Map Excel/CSV row -> Voter fields per your new schema
+function mapRow(row: Record<string, any>) {
+  const name = String(pickInsensitive(row, ["name","full name","voter_name"], "")).trim();
+
+  const village  = String(pickInsensitive(row, ["village","area"], "")).trim() || null;
+  const voterId  = String(pickInsensitive(row, ["voterId","voter_id","epic"], "")).trim() || null;
+  const mobile1  = String(pickInsensitive(row, ["mobile1","phone","mobile"], "")).trim() || null;
+  const mobile2  = String(pickInsensitive(row, ["mobile2","alt_phone"], "")).trim() || null;
+  const email    = String(pickInsensitive(row, ["email"], "")).trim() || null;
+
+  const colourCode = (toColour(pickInsensitive(row, ["colourCode","color","segment"], "")) ?? "OTHER") as ColourCode;
+  const voted      = toBool(pickInsensitive(row, ["voted"], "")) ?? false;
+  const starVoter  = toBool(pickInsensitive(row, ["starVoter","star"], "")) ?? false;
+  const dead       = toBool(pickInsensitive(row, ["dead","is_dead"], "")) ?? false;
 
   const n = (x: any) => (x === "" || x == null ? null : Number(x));
-  const boothNo = n(pick(["boothNo", "booth_no"]));
-  const partNo = n(pick(["partNo", "part_no"]));
-  const srn = n(pick(["srn", "serial"]));
+  const boothNo  = n(pickInsensitive(row, ["boothNo","booth_no"]));
+  const partNo   = n(pickInsensitive(row, ["partNo","part_no"]));
+  const srn      = n(pickInsensitive(row, ["srn","serial"]));
+
+  const houseNo  = String(pickInsensitive(row, ["houseNo","house_no"], "")).trim() || null;
+  const address  = String(pickInsensitive(row, ["address"], "")).trim() || null;
+  const boothName= String(pickInsensitive(row, ["boothName","booth_name"], "")).trim() || null;
+
+  const caste     = String(pickInsensitive(row, ["caste"], "")).trim() || null;
+  const profession= String(pickInsensitive(row, ["profession"], "")).trim() || null;
+  const demands   = String(pickInsensitive(row, ["demands"], "")).trim() || null;
+  const extraInfo = String(pickInsensitive(row, ["extraInfo","notes","remark"], "")).trim() || null;
+
+  const dobRaw = String(pickInsensitive(row, ["dob","date_of_birth"], "")).trim();
+  const dob = dobRaw ? new Date(dobRaw) : null;
+
+  // Family fields from the sheet
+  const familyExternalId =
+    String(
+      pickInsensitive(
+        row,
+        ["familyId","family","janAadhaar","jan_aadhaar","rationCard","ration_card","family_code","family_id"],
+        ""
+      )
+    ).trim() || null;
+
+  const familyIdTypeRaw =
+    String(pickInsensitive(row, ["familyIdType","family_id_type","id_type"], "")).trim() || null;
+  const familyIdType = toFamilyIdTypeEnum(familyIdTypeRaw);
+
+  // Optional: relation/head (if present)
+  const relationRaw = String(pickInsensitive(row, ["relationToHead","role"], "")).trim() || null;
+  const relationToHead = toFamilyRoleEnum(relationRaw);
+
+  const headIdRaw = String(pickInsensitive(row, ["headId","head_id"], "")).trim();
+  const headId = headIdRaw ? BigInt(headIdRaw) : null;
 
   return {
-    name, village, voterId, mobile1, mobile2,
-    colourCode, voted, starVoter, dead,
-    boothNo, partNo, srn,
+    voter: {
+      name, village, voterId, mobile1, mobile2, email,
+      colourCode, voted, starVoter, dead,
+      boothNo, partNo, srn, houseNo, address, boothName,
+      caste, profession, demands, extraInfo, dob,
+      // IMPORTANT: In your schema, Voter stores the *familyId string* directly:
+      familyId: familyExternalId,
+      familyIdType: familyIdType ?? null,
+      relationToHead, // enum or null
+      headId,
+    },
+    // for ImportRow audit trail
+    familyExternalId,
+    familyIdType,
   };
 }
 
+// ---------------------------------------------
+// Route
+// ---------------------------------------------
 export async function POST(req: NextRequest) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -111,12 +199,11 @@ export async function POST(req: NextRequest) {
   const file = form?.get("file");
   if (!file || !(file instanceof File)) {
     return NextResponse.json({ error: "file required (CSV/XLSX)" }, { status: 400 });
-    }
+  }
 
   const filename = file.name || "upload";
   const buf = Buffer.from(await file.arrayBuffer());
 
-  // Create batch (processing)
   const batch = await prisma.importBatch.create({
     data: {
       fileName: filename,
@@ -128,11 +215,8 @@ export async function POST(req: NextRequest) {
 
   let rows: Record<string, any>[] = [];
   try {
-    if (/\.(xlsx|xlsm|xls)$/i.test(filename)) {
-      rows = await parseXlsx(buf);
-    } else {
-      rows = parseCsv(buf);
-    }
+    if (/\.(xlsx|xlsm|xls)$/i.test(filename)) rows = await parseXlsx(buf);
+    else rows = parseCsv(buf);
   } catch (e: any) {
     await prisma.importBatch.update({
       where: { id: batch.id },
@@ -146,16 +230,21 @@ export async function POST(req: NextRequest) {
 
   for (const raw of rows) {
     rowCount++;
-    const voterData = mapRowToVoter(raw);
+    const mapped = mapRow(raw);
+    const { voter, familyExternalId, familyIdType } = mapped;
 
-    const importRowBase = {
-      batchId: batch.id,
+    // ImportRow base (MUST match schema fields)
+    const importRowBase: Prisma.ImportRowUncheckedCreateInput = {
+      batchId: batch.id as unknown as bigint,
+      status: "SKIPPED", // default; will override below
       raw: JSON.stringify(raw),
-      voterIdStr: voterData.voterId ?? null,
-      phone1: voterData.mobile1 ?? null,
+      voterIdStr: voter.voterId ?? null,
+      phone1: voter.mobile1 ?? null,
+      familyExternalId: familyExternalId ?? null,
+      familyIdType: familyIdType ?? null,
     };
 
-    if (!voterData.name) {
+    if (!voter.name) {
       failed++;
       await prisma.importRow.create({
         data: { ...importRowBase, status: "SKIPPED", error: "Missing required field: name" },
@@ -164,13 +253,76 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const created = await prisma.voter.create({
-        data: voterData,
-        select: { id: true },
-      });
+      // Build typed payloads so TS matches Prisma expectations
+      const baseData = {
+        name: voter.name,
+        voterId: voter.voterId ?? null,
+        // age/gender omitted unless you map them from sheet
+        village: voter.village,
+        houseNo: voter.houseNo,
+        address: voter.address,
+        boothName: voter.boothName,
+        boothNo: voter.boothNo,
+        partNo: voter.partNo,
+        srn: voter.srn,
+        mobile1: voter.mobile1,
+        mobile2: voter.mobile2,
+        email: voter.email,
+        colourCode: voter.colourCode, // Prisma enum ColourCode
+        voted: voter.voted,
+        starVoter: voter.starVoter,
+        dead: voter.dead,
+        caste: voter.caste,
+        profession: voter.profession,
+        demands: voter.demands,
+        extraInfo: voter.extraInfo,
+        dob: voter.dob,
+        familyId: voter.familyId ?? null,          // string per schema
+        familyIdType: voter.familyIdType ?? null,  // enum or null
+        relationToHead: voter.relationToHead ?? null, // FamilyRole | null
+        headId: voter.headId ?? null,
+      };
+
+      // Explicit create/update types
+      const createData: Prisma.VoterUncheckedCreateInput = { ...baseData };
+      const updateData: Prisma.VoterUncheckedUpdateInput = { ...baseData };
+
+      let createdId: bigint;
+
+      if (voter.voterId) {
+        const up = await prisma.voter.upsert({
+          where: { voterId: voter.voterId },
+          update: updateData,
+          create: createData,
+          select: { id: true },
+        });
+        createdId = up.id as any;
+      } else {
+        const existing = voter.mobile1
+          ? await prisma.voter.findFirst({
+              where: { name: voter.name, mobile1: voter.mobile1 },
+              select: { id: true },
+            })
+          : null;
+
+        if (existing) {
+          await prisma.voter.update({
+            where: { id: existing.id },
+            data: updateData,
+          });
+          createdId = existing.id as any;
+        } else {
+          const c = await prisma.voter.create({
+            data: createData,
+            select: { id: true },
+          });
+          createdId = c.id as any;
+        }
+      }
+
       success++;
       await prisma.importRow.create({
-        data: { ...importRowBase, status: "SUCCESS", voterId: created.id },
+        data: { ...importRowBase, status: "SUCCESS", voterId: createdId },
       });
     } catch (e: any) {
       failed++;

@@ -1,17 +1,18 @@
 // src/app/voters/[id]/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
-  ArrowLeft, Edit2, Save, X, CheckCircle, Phone, Mail, MapPin,
-  Home, Building, Users, FileText, Plus, Search, Trash2, ExternalLink
+  ArrowLeft, Edit2, Save, X, CheckCircle, Phone, FileText,
+  MapPin, Home, Users, ExternalLink, Crown, IdCard
 } from "lucide-react";
 
 type Gender = "M" | "F" | "O";
 type ColourCode = "OUR" | "OPPOSITE" | "DOUBTFUL" | "OTHER";
-type KinRelation = "SPOUSE" | "CHILD" | "PARENT" | "SIBLING" | "OTHER";
+type FamilyRole = "HEAD" | "SPOUSE" | "CHILD" | "PARENT" | "SIBLING" | "OTHER";
+type FamilyIdType = "JAN_AADHAAR_FAMILY_ID" | "RATION_CARD_NO" | "OTHER";
 
 type Voter = {
   id: string;
@@ -34,41 +35,35 @@ type Voter = {
   starVoter: boolean;
   dead: boolean;
 
+  // survey
   caste: string | null;
   profession: string | null;
-  personnel: string | null;
-  society: string | null;
-  flatNo: string | null;
-  newAddress: string | null;
   demands: string | null;
-  extraInfo1: string | null;
-  extraInfo2: string | null;
-  extraInfo3: string | null;
-  extraInfo4: string | null;
-  extraInfo5: string | null;
-  extraCheck1: boolean | null;
-  extraCheck2: boolean | null;
+  extraInfo: string | null;
   dob: string | null;
+
+  // family (head-based)
+  familyId: string | null;
+  familyIdType: FamilyIdType | null;
+  relationToHead: FamilyRole | null;
+  headId: string | null;
+  head?: { id: string; name: string } | null;
+
+  // optional preview from API
+  familyPreview?: Array<{ id: string; name: string }>;
 };
 
-type FamilyLink = {
-  linkId: string;
-  relation: KinRelation;
-  notes: string | null;
-  relative: { id: string; name: string; village: string | null; mobile1: string | null };
-};
-type SearchRow = {
+type ListRow = {
   id: string;
   name: string;
+  voterId: string | null;
   village: string | null;
   mobile1: string | null;
-  voterId: string | null;
   colourCode: ColourCode;
 };
 
 export default function VoterPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
 
   const [tab, setTab] = useState<"details" | "family" | "survey">("details");
 
@@ -76,31 +71,36 @@ export default function VoterPage() {
   const [voter, setVoter] = useState<Voter | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  async function load() {
+  async function load(signal?: AbortSignal) {
+    if (!id) return;
     setLoading(true);
     setErr(null);
     try {
-      const r = await fetch(`/api/voters/${id}`, { cache: "no-store" });
+      const r = await fetch(`/api/voters/${id}`, { cache: "no-store", signal });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "Failed to load");
       const dob = j.dob ? String(j.dob).slice(0, 10) : null;
       setVoter({ ...j, dob });
     } catch (e: any) {
+      if (signal?.aborted) return;
       setErr(e?.message || "Failed to load");
       setVoter(null);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }
+
   useEffect(() => {
-    load();
+    const ctrl = new AbortController();
+    load(ctrl.signal);
+    return () => ctrl.abort();
   }, [id]);
 
   function setField<K extends keyof Voter>(k: K, v: Voter[K]) {
     setVoter((s) => (s ? { ...s, [k]: v } : s));
   }
 
-  // DETAILS EDITING
+  // DETAILS EDIT
   const [editDetails, setEditDetails] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
   const [msgDetails, setMsgDetails] = useState<string | null>(null);
@@ -131,7 +131,14 @@ export default function VoterPage() {
         starVoter: !!voter.starVoter,
         dead: !!voter.dead,
         dob: voter.dob || null,
+
+        // family
+        familyId: voter.familyId?.trim() || null,
+        familyIdType: voter.familyIdType || null,
+        relationToHead: voter.relationToHead || null,
+        headId: voter.relationToHead === "HEAD" ? null : (voter.headId || null),
       };
+
       const r = await fetch(`/api/voters/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -155,7 +162,7 @@ export default function VoterPage() {
     load();
   }
 
-  // SURVEY EDITING
+  // SURVEY EDIT
   const [editSurvey, setEditSurvey] = useState(false);
   const [savingSurvey, setSavingSurvey] = useState(false);
   const [msgSurvey, setMsgSurvey] = useState<string | null>(null);
@@ -169,18 +176,8 @@ export default function VoterPage() {
       const payload = {
         caste: voter.caste?.trim() || null,
         profession: voter.profession?.trim() || null,
-        personnel: voter.personnel?.trim() || null,
-        society: voter.society?.trim() || null,
-        flatNo: voter.flatNo?.trim() || null,
-        newAddress: voter.newAddress?.trim() || null,
         demands: voter.demands?.trim() || null,
-        extraInfo1: voter.extraInfo1?.trim() || null,
-        extraInfo2: voter.extraInfo2?.trim() || null,
-        extraInfo3: voter.extraInfo3?.trim() || null,
-        extraInfo4: voter.extraInfo4?.trim() || null,
-        extraInfo5: voter.extraInfo5?.trim() || null,
-        extraCheck1: voter.extraCheck1 ?? null,
-        extraCheck2: voter.extraCheck2 ?? null,
+        extraInfo: voter.extraInfo?.trim() || null,
       };
       const r = await fetch(`/api/voters/${id}`, {
         method: "PUT",
@@ -205,105 +202,77 @@ export default function VoterPage() {
     load();
   }
 
-  // FAMILY
+  // ===== FAMILY (dynamic via familyId) =====
   const [famLoading, setFamLoading] = useState(false);
-  const [family, setFamily] = useState<FamilyLink[]>([]);
   const [famErr, setFamErr] = useState<string | null>(null);
-  async function loadFamily() {
-    setFamLoading(true);
-    setFamErr(null);
-    try {
-      const r = await fetch(`/api/voters/${id}/family`, { cache: "no-store" });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || "Failed to load family");
-      setFamily(j.items || []);
-    } catch (e: any) {
-      setFamErr(e?.message || "Failed to load family");
+  const [family, setFamily] = useState<ListRow[]>([]);
+  const lastQueryRef = useRef<string>("");
+
+  useEffect(() => {
+    if (tab !== "family") return;
+    if (!voter?.familyId) {
       setFamily([]);
-    } finally {
-      setFamLoading(false);
-    }
-  }
-  useEffect(() => {
-    if (tab === "family") loadFamily();
-  }, [tab, id]);
-
-  const [relSearch, setRelSearch] = useState("");
-  const [relResults, setRelResults] = useState<SearchRow[]>([]);
-  const [relSearching, setRelSearching] = useState(false);
-  const [relation, setRelation] = useState<KinRelation>("OTHER");
-  const [relNotes, setRelNotes] = useState("");
-  const [selectedRelative, setSelectedRelative] = useState<SearchRow | null>(null);
-  const [relErr, setRelErr] = useState<string | null>(null);
-  const [addingLink, setAddingLink] = useState(false);
-
-  const debRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!relSearch.trim()) {
-      setRelResults([]);
-      setSelectedRelative(null);
       return;
     }
-    if (debRef.current) window.clearTimeout(debRef.current);
-    debRef.current = window.setTimeout(async () => {
-      setRelSearching(true);
-      setRelErr(null);
+    const famId = voter.familyId;
+    // prevent duplicate fetches if same famId re-renders
+    if (lastQueryRef.current === famId) return;
+    lastQueryRef.current = famId;
+
+    const ctrl = new AbortController();
+    (async () => {
+      setFamLoading(true);
+      setFamErr(null);
       try {
-        const usp = new URLSearchParams({ q: relSearch.trim(), limit: "10" });
-        const r = await fetch(`/api/voters/search?${usp.toString()}`, { cache: "no-store" });
-        const j = await r.json().catch(() => []);
-        setRelResults(Array.isArray(j) ? j : []);
+        // Use list endpoint (supports search by familyId). Then client-filter for exact same familyId.
+        const usp = new URLSearchParams({
+          q: famId,
+          limit: "100",
+        });
+        const r = await fetch(`/api/voters?${usp.toString()}`, { cache: "no-store", signal: ctrl.signal });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || "Failed to load family");
+
+        const raw: any[] = Array.isArray(j?.items) ? j.items : [];
+        // We still need each row's familyId to filter exact. If not present in list row, refetch each id (safe small N).
+        // Try fast path: if rows already contain familyId (in your schema, they don't by default), filter here.
+        // Fallback: hydrate minimal details by GET /api/voters/[id] for accuracy.
+        const ensured = await Promise.all(
+          raw.map(async (row) => {
+            if (row.familyId) return row;
+            const d = await fetch(`/api/voters/${row.id}`, { cache: "no-store", signal: ctrl.signal })
+              .then((x) => x.json())
+              .catch(() => null);
+            return d ? { ...row, familyId: d.familyId } : row;
+          })
+        );
+
+        const exact = ensured
+          .filter((m) => m.familyId === famId && String(m.id) !== String(voter.id))
+          .map((m) => ({
+            id: String(m.id),
+            name: String(m.name ?? ""),
+            voterId: m.voterId ?? null,
+            village: m.village ?? null,
+            mobile1: m.mobile1 ?? null,
+            colourCode: (m.colourCode as ColourCode) ?? "OTHER",
+          })) as ListRow[];
+
+        setFamily(exact);
       } catch (e: any) {
-        setRelErr(e?.message || "Search failed");
+        if (!ctrl.signal.aborted) {
+          setFamErr(e?.message || "Failed to load family");
+          setFamily([]);
+        }
       } finally {
-        setRelSearching(false);
+        if (!ctrl.signal.aborted) setFamLoading(false);
       }
-    }, 300);
-    return () => { if (debRef.current) window.clearTimeout(debRef.current); };
-  }, [relSearch]);
+    })();
 
-  async function addFamilyLink() {
-    if (!selectedRelative) return setRelErr("Select a person from search results");
-    if (selectedRelative.id === id) return setRelErr("Cannot link to self");
+    return () => ctrl.abort();
+  }, [tab, voter?.familyId, voter?.id]);
 
-    setAddingLink(true);
-    setRelErr(null);
-    try {
-      const r = await fetch(`/api/voters/${id}/family`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          relativeId: selectedRelative.id,
-          relation,
-          notes: relNotes.trim() || null,
-        }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || "Failed to add");
-      setRelSearch("");
-      setRelResults([]);
-      setSelectedRelative(null);
-      setRelation("OTHER");
-      setRelNotes("");
-      await loadFamily();
-    } catch (e: any) {
-      setRelErr(e?.message || "Failed to add");
-    } finally {
-      setAddingLink(false);
-    }
-  }
-
-  async function removeFamilyLink(linkId: string) {
-    try {
-      const r = await fetch(`/api/voters/${id}/family`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ linkId }),
-      });
-      if (r.ok) await loadFamily();
-    } catch {}
-  }
-
+  // Helpers
   const getColorBadge = (code: ColourCode) => {
     const styles = {
       OUR: "bg-green-100 text-green-700 border-green-200",
@@ -313,6 +282,27 @@ export default function VoterPage() {
     };
     return styles[code] || styles.OTHER;
   };
+
+  async function makeHead() {
+    if (!voter) return;
+    const payload = {
+      familyId: voter.familyId?.trim() || `FAM-${voter.id}`,
+      familyIdType: voter.familyIdType || "OTHER",
+      relationToHead: "HEAD" as FamilyRole,
+      headId: null as any,
+    };
+    const r = await fetch(`/api/voters/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      alert(j.error || "Failed to set head");
+      return;
+    }
+    await load();
+  }
 
   if (loading) {
     return (
@@ -358,15 +348,32 @@ export default function VoterPage() {
               <span>Back to List</span>
             </Link>
             <h1 className="text-3xl font-bold text-gray-900">{voter.name}</h1>
-            <div className="flex items-center gap-3 text-sm text-gray-600">
+            <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
               <span>ID: {voter.voterId || "—"}</span>
               <span>•</span>
               <span>{voter.village || "No village"}</span>
-              {voter.age && (
+              {voter.age != null && (
                 <>
                   <span>•</span>
                   <span>{voter.age} years</span>
                 </>
+              )}
+              {/* Family quick glance */}
+              <span>•</span>
+              <span className="inline-flex items-center gap-1">
+                <IdCard size={14} className="text-gray-400" /> Family: {voter.familyId || "—"}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Crown size={14} className={`${voter.relationToHead === "HEAD" ? "text-amber-500" : "text-gray-400"}`} />
+                Role: {voter.relationToHead || "—"}
+              </span>
+              {voter.headId && voter.relationToHead !== "HEAD" && (
+                <Link
+                  href={`/voters/${voter.headId}`}
+                  className="inline-flex items-center gap-1 text-blue-700 hover:underline"
+                >
+                  <Crown size={14} /> Head: {voter.head?.name || voter.headId}
+                </Link>
               )}
             </div>
           </div>
@@ -389,7 +396,6 @@ export default function VoterPage() {
               </div>
             )}
 
-            {/* edit/save/cancel depending on tab */}
             {tab === "details" && (
               <>
                 {!editDetails ? (
@@ -486,18 +492,18 @@ export default function VoterPage() {
                   : "text-gray-600 hover:bg-gray-50"
               }`}
             >
-              {t === "details" ? "Voter Details" : t === "family" ? "Family Links" : "Survey Data"}
+              {t === "details" ? "Voter Details" : t === "family" ? "Family" : "Survey Data"}
             </button>
           ))}
         </div>
 
-        {/* DETAILS TAB (no form submit) */}
+        {/* DETAILS TAB */}
         {tab === "details" && (
           <div className="space-y-6 fade-in">
             {/* Basic Info */}
             <div className="bg-white rounded-2xl border-2 border-gray-200 p-6 space-y-4">
               <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <Building size={20} className="text-gray-400" />
+                <Home size={20} className="text-gray-400" />
                 Basic Information
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -526,7 +532,10 @@ export default function VoterPage() {
                     value={voter.age ?? ""}
                     disabled={!editDetails}
                     inputMode="numeric"
-                    onChange={(e) => setField("age", Number(e.target.value.replace(/\D/g, "")) || null)}
+                    onChange={(e) => {
+                      const onlyDigits = e.target.value.replace(/\D/g, "");
+                      setField("age", onlyDigits ? Number(onlyDigits) : null);
+                    }}
                     className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
                   />
                 </div>
@@ -597,7 +606,7 @@ export default function VoterPage() {
             {/* Booth Info */}
             <div className="bg-white rounded-2xl border-2 border-gray-200 p-6 space-y-4">
               <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <Home size={20} className="text-gray-400" />
+                <IdCard size={20} className="text-gray-400" />
                 Booth Details
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -616,7 +625,10 @@ export default function VoterPage() {
                     value={voter.boothNo ?? ""}
                     disabled={!editDetails}
                     inputMode="numeric"
-                    onChange={(e) => setField("boothNo", Number(e.target.value.replace(/\D/g, "")) || null)}
+                    onChange={(e) => {
+                      const onlyDigits = e.target.value.replace(/\D/g, "");
+                      setField("boothNo", onlyDigits ? Number(onlyDigits) : null);
+                    }}
                     className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
                   />
                 </div>
@@ -626,7 +638,10 @@ export default function VoterPage() {
                     value={voter.partNo ?? ""}
                     disabled={!editDetails}
                     inputMode="numeric"
-                    onChange={(e) => setField("partNo", Number(e.target.value.replace(/\D/g, "")) || null)}
+                    onChange={(e) => {
+                      const onlyDigits = e.target.value.replace(/\D/g, "");
+                      setField("partNo", onlyDigits ? Number(onlyDigits) : null);
+                    }}
                     className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
                   />
                 </div>
@@ -636,7 +651,10 @@ export default function VoterPage() {
                     value={voter.srn ?? ""}
                     disabled={!editDetails}
                     inputMode="numeric"
-                    onChange={(e) => setField("srn", Number(e.target.value.replace(/\D/g, "")) || null)}
+                    onChange={(e) => {
+                      const onlyDigits = e.target.value.replace(/\D/g, "");
+                      setField("srn", onlyDigits ? Number(onlyDigits) : null);
+                    }}
                     className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
                   />
                 </div>
@@ -735,75 +753,53 @@ export default function VoterPage() {
                 </div>
               </div>
             </div>
-          </div>
-        )}
 
-        {/* FAMILY TAB */}
-        {tab === "family" && (
-          <div className="space-y-6 fade-in">
-            {/* Add Family Member */}
+            {/* Family (head-based) */}
             <div className="bg-white rounded-2xl border-2 border-gray-200 p-6 space-y-4">
               <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <Plus size={20} className="text-gray-400" />
-                Add Family Member
+                <Users size={20} className="text-gray-400" />
+                Family (Head-based)
               </h3>
 
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                <div className="lg:col-span-6 space-y-3">
-                  <div className="relative">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input
-                      value={relSearch}
-                      onChange={(e) => setRelSearch(e.target.value)}
-                      placeholder="Search by name, village, voter ID, phone..."
-                      className="w-full pl-11 pr-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none transition-colors"
-                    />
-                  </div>
-
-                  {relSearching && (
-                    <div className="text-sm text-gray-500">Searching...</div>
-                  )}
-
-                  {relResults.length > 0 && (
-                    <div className="border-2 border-gray-200 rounded-xl overflow-hidden max-h-80 overflow-y-auto">
-                      {relResults.map((r) => (
-                        <div
-                          key={r.id}
-                          className={`flex items-center justify-between p-3 hover:bg-gray-50 transition-colors border-b last:border-b-0 ${
-                            selectedRelative?.id === r.id ? "bg-blue-50" : ""
-                          }`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="font-medium text-gray-900">{r.name}</div>
-                            <div className="text-xs text-gray-500 truncate">
-                              {r.voterId && `ID: ${r.voterId} • `}
-                              {r.village || "—"}
-                              {r.mobile1 && ` • ${r.mobile1}`}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => setSelectedRelative(r)}
-                            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                              selectedRelative?.id === r.id
-                                ? "bg-[#EF3340] text-white"
-                                : "border-2 border-gray-200 hover:border-[#EF3340]/50"
-                            }`}
-                          >
-                            {selectedRelative?.id === r.id ? "Selected" : "Select"}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div className="lg:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Family ID</label>
+                  <input
+                    value={voter.familyId || ""}
+                    disabled={!editDetails}
+                    onChange={(e) => setField("familyId", e.target.value)}
+                    placeholder="e.g., Jan Aadhaar Family ID / Ration No."
+                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
+                  />
                 </div>
-
-                <div className="lg:col-span-3">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Relationship</label>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Family ID Type</label>
                   <select
-                    value={relation}
-                    onChange={(e) => setRelation(e.target.value as KinRelation)}
-                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none transition-colors"
+                    value={voter.familyIdType || ""}
+                    disabled={!editDetails}
+                    onChange={(e) => setField("familyIdType", (e.target.value || null) as FamilyIdType | null)}
+                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
                   >
+                    <option value="">Select</option>
+                    <option value="JAN_AADHAAR_FAMILY_ID">Jan Aadhaar Family Id</option>
+                    <option value="RATION_CARD_NO">Ration Card No</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Role (relative to Head)</label>
+                  <select
+                    value={voter.relationToHead || ""}
+                    disabled={!editDetails}
+                    onChange={(e) => {
+                      const v = (e.target.value || null) as FamilyRole | null;
+                      setField("relationToHead", v);
+                      if (v === "HEAD") setField("headId", null);
+                    }}
+                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
+                  >
+                    <option value="">Select</option>
+                    <option value="HEAD">Head</option>
                     <option value="SPOUSE">Spouse</option>
                     <option value="CHILD">Child</option>
                     <option value="PARENT">Parent</option>
@@ -811,49 +807,78 @@ export default function VoterPage() {
                     <option value="OTHER">Other</option>
                   </select>
                 </div>
-
-                <div className="lg:col-span-3">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Notes (Optional)</label>
-                  <input
-                    value={relNotes}
-                    onChange={(e) => setRelNotes(e.target.value)}
-                    placeholder="Additional notes"
-                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none transition-colors"
-                  />
+                <div className="flex items-end">
+                  {voter.relationToHead !== "HEAD" ? (
+                    <button
+                      type="button"
+                      onClick={makeHead}
+                      className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 text-white rounded-xl font-medium hover:shadow-lg transition-all"
+                    >
+                      <Crown size={18} />
+                      <span>Make this person Head</span>
+                    </button>
+                  ) : (
+                    <div className="w-full px-4 py-2.5 border-2 border-green-300 bg-green-50 rounded-xl text-green-700 font-medium flex items-center gap-2">
+                      <Crown size={18} /> This person is the Head
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {selectedRelative && (
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center justify-between">
-                  <div className="text-sm text-blue-800">
-                    Selected: <span className="font-semibold">{selectedRelative.name}</span>
+              {voter.relationToHead !== "HEAD" && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Head Voter ID (numeric)</label>
+                    <input
+                      value={voter.headId || ""}
+                      disabled={!editDetails}
+                      inputMode="numeric"
+                      onChange={(e) => {
+                        const onlyDigits = e.target.value.replace(/\D/g, "");
+                        setField("headId", onlyDigits || null);
+                      }}
+                      className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
+                    />
                   </div>
-                  <button
-                    onClick={() => setSelectedRelative(null)}
-                    className="text-blue-600 hover:text-blue-800"
-                  >
-                    <X size={18} />
-                  </button>
+                  {voter.headId && (
+                    <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4 text-sm text-blue-800 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Crown size={16} />
+                        <span>Current Head:</span>
+                        <Link href={`/voters/${voter.headId}`} className="font-semibold hover:underline">
+                          {voter.head?.name || voter.headId}
+                        </Link>
+                      </div>
+                      <Link
+                        href={`/voters/${voter.headId}`}
+                        className="inline-flex items-center gap-1 text-blue-700 hover:underline"
+                      >
+                        View <ExternalLink size={14} />
+                      </Link>
+                    </div>
+                  )}
                 </div>
               )}
+              <p className="text-xs text-gray-500">Tip: If you set role as <b>HEAD</b>, leave “Head Voter ID” blank.</p>
+            </div>
+          </div>
+        )}
 
-              {relErr && (
-                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
-                  {relErr}
-                </div>
+        {/* FAMILY TAB */}
+        {tab === "family" && (
+          <div className="space-y-6 fade-in">
+            {/* context banner */}
+            <div className="rounded-xl border-2 border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 flex flex-wrap gap-4">
+              <span className="inline-flex items-center gap-1"><IdCard size={14} /> Family: <b>{voter.familyId || "—"}</b></span>
+              <span className="inline-flex items-center gap-1"><Crown size={14} className={voter.relationToHead === "HEAD" ? "text-amber-500" : ""} /> Role: <b>{voter.relationToHead || "—"}</b></span>
+              {voter.headId && voter.relationToHead !== "HEAD" && (
+                <span className="inline-flex items-center gap-1">
+                  <Crown size={14} />
+                  Head: <Link href={`/voters/${voter.headId}`} className="text-blue-700 hover:underline">{voter.head?.name || voter.headId}</Link>
+                </span>
               )}
-
-              <button
-                onClick={addFamilyLink}
-                disabled={addingLink || !selectedRelative}
-                className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-[#EF3340] to-[#C82333] text-white rounded-xl font-semibold hover:shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all"
-              >
-                <Plus size={18} />
-                <span>{addingLink ? "Adding..." : "Add Family Link"}</span>
-              </button>
             </div>
 
-            {/* Family List */}
             <div className="bg-white rounded-2xl border-2 border-gray-200 overflow-hidden">
               <div className="bg-gray-50 px-6 py-3 border-b-2 border-gray-200">
                 <h3 className="font-semibold text-gray-900 flex items-center gap-2">
@@ -869,59 +894,73 @@ export default function VoterPage() {
                 </div>
               ) : famErr ? (
                 <div className="p-6 text-center text-red-600">{famErr}</div>
+              ) : !voter.familyId ? (
+                <div className="p-12 text-center">
+                  <p className="text-gray-600 font-medium">This voter has no Family ID set.</p>
+                  <p className="text-sm text-gray-500 mt-1">Set a <b>Family ID</b> in Details → Family (Head-based) to link members automatically.</p>
+                </div>
               ) : family.length === 0 ? (
                 <div className="p-12 text-center">
-                  <Users className="mx-auto text-gray-300 mb-3" size={48} />
-                  <p className="text-gray-600 font-medium">No family members linked</p>
-                  <p className="text-sm text-gray-500 mt-1">Use the search above to add family connections</p>
+                  <p className="text-gray-600 font-medium">No other members found for this Family ID.</p>
+                  <p className="text-sm text-gray-500 mt-1">Ensure other profiles share the exact same <b>Family ID</b>.</p>
                 </div>
               ) : (
-                <div className="divide-y divide-gray-200">
-                  {family.map((l) => (
-                    <div key={l.linkId} className="p-4 hover:bg-gray-50 transition-colors">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <div className="font-semibold text-gray-900">{l.relative.name}</div>
-                            <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-blue-100 text-blue-700">
-                              {l.relation}
-                            </span>
+                <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {family.map((m) => {
+                    const initials = (m.name || "—")
+                      .split(" ")
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((s) => s[0]?.toUpperCase())
+                      .join("");
+                    return (
+                      <Link
+                        key={m.id}
+                        href={`/voters/${m.id}`}
+                        className="group relative rounded-2xl border-2 border-gray-200 hover:border-[#EF3340]/40 transition-all bg-white overflow-hidden"
+                      >
+                        {/* gradient ribbon */}
+                        <div className="absolute inset-x-0 top-0 h-20 bg-gradient-to-r from-[#EF3340]/10 to-[#C82333]/10 pointer-events-none" />
+                        <div className="p-5 flex items-start gap-4">
+                          <div className="shrink-0 w-12 h-12 rounded-2xl bg-gray-100 border border-gray-200 grid place-items-center text-gray-700 font-semibold">
+                            {initials || "?"}
                           </div>
-                          <div className="text-sm text-gray-600">
-                            {l.relative.village || "—"}
-                            {l.relative.mobile1 && ` • ${l.relative.mobile1}`}
-                            {l.notes && ` • ${l.notes}`}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-base font-semibold text-gray-900 truncate">{m.name}</h4>
+                              {m.colourCode !== "OTHER" && (
+                                <span className={`px-2 py-0.5 rounded-md text-xs font-medium border ${getColorBadge(m.colourCode)}`}>
+                                  {m.colourCode}
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1 text-sm text-gray-600 truncate">
+                              {m.village || "—"} {m.mobile1 ? <>• {m.mobile1}</> : null}
+                            </div>
+                            {m.voterId && (
+                              <div className="mt-0.5 text-xs text-gray-500">ID: {m.voterId}</div>
+                            )}
                           </div>
+                          <ExternalLink className="text-gray-400 group-hover:text-[#EF3340] transition-colors" size={18} />
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Link
-                            href={`/voters/${l.relative.id}`}
-                            className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
-                            title="View Details"
-                          >
-                            <ExternalLink size={18} className="text-gray-600" />
-                          </Link>
-                          <button
-                            onClick={() => removeFamilyLink(l.linkId)}
-                            className="p-2 rounded-lg hover:bg-red-50 transition-colors"
-                            title="Remove Link"
-                          >
-                            <Trash2 size={18} className="text-red-600" />
-                          </button>
+                        {/* hover underline */}
+                        <div className="px-5 pb-4">
+                          <span className="inline-block text-sm text-[#EF3340] opacity-0 group-hover:opacity-100 transition-opacity">
+                            View details →
+                          </span>
                         </div>
-                      </div>
-                    </div>
-                  ))}
+                      </Link>
+                    );
+                  })}
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* SURVEY TAB (no form submit) */}
+        {/* SURVEY TAB */}
         {tab === "survey" && (
           <div className="space-y-6 fade-in">
-            {/* Survey Fields */}
             <div className="bg-white rounded-2xl border-2 border-gray-200 p-6 space-y-4">
               <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                 <FileText size={20} className="text-gray-400" />
@@ -946,42 +985,6 @@ export default function VoterPage() {
                     className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Personnel</label>
-                  <input
-                    value={voter.personnel || ""}
-                    disabled={!editSurvey}
-                    onChange={(e) => setField("personnel", e.target.value)}
-                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Society</label>
-                  <input
-                    value={voter.society || ""}
-                    disabled={!editSurvey}
-                    onChange={(e) => setField("society", e.target.value)}
-                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Flat No.</label>
-                  <input
-                    value={voter.flatNo || ""}
-                    disabled={!editSurvey}
-                    onChange={(e) => setField("flatNo", e.target.value)}
-                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
-                  />
-                </div>
-                <div className="md:col-span-2 lg:col-span-3">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">New Address</label>
-                  <input
-                    value={voter.newAddress || ""}
-                    disabled={!editSurvey}
-                    onChange={(e) => setField("newAddress", e.target.value)}
-                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
-                  />
-                </div>
                 <div className="md:col-span-2 lg:col-span-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Demands</label>
                   <input
@@ -991,79 +994,15 @@ export default function VoterPage() {
                     className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
                   />
                 </div>
-              </div>
-            </div>
-
-            {/* Extra Fields */}
-            <div className="bg-white rounded-2xl border-2 border-gray-200 p-6 space-y-4">
-              <h3 className="text-lg font-semibold text-gray-900">Additional Fields</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Extra Info 1</label>
-                  <input
-                    value={voter.extraInfo1 || ""}
+                <div className="md:col-span-2 lg:col-span-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Extra Info / Notes</label>
+                  <textarea
+                    value={voter.extraInfo || ""}
                     disabled={!editSurvey}
-                    onChange={(e) => setField("extraInfo1", e.target.value)}
+                    onChange={(e) => setField("extraInfo", e.target.value)}
+                    rows={3}
                     className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Extra Info 2</label>
-                  <input
-                    value={voter.extraInfo2 || ""}
-                    disabled={!editSurvey}
-                    onChange={(e) => setField("extraInfo2", e.target.value)}
-                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Extra Info 3</label>
-                  <input
-                    value={voter.extraInfo3 || ""}
-                    disabled={!editSurvey}
-                    onChange={(e) => setField("extraInfo3", e.target.value)}
-                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Extra Info 4</label>
-                  <input
-                    value={voter.extraInfo4 || ""}
-                    disabled={!editSurvey}
-                    onChange={(e) => setField("extraInfo4", e.target.value)}
-                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Extra Info 5</label>
-                  <input
-                    value={voter.extraInfo5 || ""}
-                    disabled={!editSurvey}
-                    onChange={(e) => setField("extraInfo5", e.target.value)}
-                    className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none disabled:bg-gray-50 disabled:text-gray-600 transition-colors"
-                  />
-                </div>
-                <div className="md:col-span-2 flex gap-6 pt-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={!!voter.extraCheck1}
-                      disabled={!editSurvey}
-                      onChange={(e) => setField("extraCheck1", e.target.checked)}
-                      className="w-5 h-5 rounded border-gray-300 text-[#EF3340] focus:ring-[#EF3340]"
-                    />
-                    <span className="text-sm font-medium text-gray-700">Extra Check 1</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={!!voter.extraCheck2}
-                      disabled={!editSurvey}
-                      onChange={(e) => setField("extraCheck2", e.target.checked)}
-                      className="w-5 h-5 rounded border-gray-300 text-[#EF3340] focus:ring-[#EF3340]"
-                    />
-                    <span className="text-sm font-medium text-gray-700">Extra Check 2</span>
-                  </label>
                 </div>
               </div>
             </div>

@@ -56,7 +56,6 @@ export async function GET(req: NextRequest) {
   const star = toBool(searchParams.get("starVoter"));
   const dead = toBool(searchParams.get("dead"));
 
-  // Build where clause (NO `mode: "insensitive"` anywhere)
   const where: Record<string, any> = {};
   if (q) {
     where.OR = [
@@ -66,6 +65,7 @@ export async function GET(req: NextRequest) {
       { mobile1:  { contains: q } },
       { mobile2:  { contains: q } },
       { boothName:{ contains: q } },
+      { familyId: { contains: q } }, // search by Family ID (Jan Aadhaar, ration card, etc.)
     ];
   }
   if (colour !== undefined) where.colourCode = colour;
@@ -116,6 +116,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
 
+    // family inputs (optional)
+    const familyId: string | null =
+      typeof body.familyId === "string" && body.familyId.trim() ? body.familyId.trim() : null;
+
+    let headIdBig: bigint | null = null;
+    if (body.headId != null) {
+      if (typeof body.headId === "string" && body.headId.trim()) {
+        try { headIdBig = BigInt(body.headId.trim()); } catch {
+          return NextResponse.json({ error: "invalid headId" }, { status: 400 });
+        }
+      } else if (typeof body.headId === "number" && Number.isFinite(body.headId)) {
+        try { headIdBig = BigInt(body.headId); } catch {
+          return NextResponse.json({ error: "invalid headId" }, { status: 400 });
+        }
+      } else if (body.headId === null) {
+        headIdBig = null;
+      }
+    }
+
     const created = await prisma.voter.create({
       data: {
         name,
@@ -136,21 +155,22 @@ export async function POST(req: NextRequest) {
         voted: typeof body.voted === "boolean" ? body.voted : false,
         starVoter: typeof body.starVoter === "boolean" ? body.starVoter : false,
         dead: typeof body.dead === "boolean" ? body.dead : false,
+
+        // survey (trimmed set)
         caste: body.caste ?? null,
         profession: body.profession ?? null,
-        personnel: body.personnel ?? null,
-        society: body.society ?? null,
-        flatNo: body.flatNo ?? null,
-        newAddress: body.newAddress ?? null,
         demands: body.demands ?? null,
-        extraInfo1: body.extraInfo1 ?? null,
-        extraInfo2: body.extraInfo2 ?? null,
-        extraInfo3: body.extraInfo3 ?? null,
-        extraInfo4: body.extraInfo4 ?? null,
-        extraInfo5: body.extraInfo5 ?? null,
-        extraCheck1: typeof body.extraCheck1 === "boolean" ? body.extraCheck1 : null,
-        extraCheck2: typeof body.extraCheck2 === "boolean" ? body.extraCheck2 : null,
+        extraInfo: body.extraInfo ?? null,
+
         dob: body.dob ? new Date(body.dob) : null,
+
+        // family fields
+        familyId,
+        relationToHead:
+          typeof body.relationToHead === "string" && body.relationToHead.trim()
+            ? (body.relationToHead as any)
+            : null,
+        headId: headIdBig,
       },
       select: { id: true },
     });

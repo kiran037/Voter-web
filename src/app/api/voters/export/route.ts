@@ -1,4 +1,4 @@
-///Users/xeoren/voter-web/src/app/api/voters/export/route.ts
+// app/api/voters/export/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
@@ -34,12 +34,13 @@ export async function GET(req: NextRequest) {
   const where: any = {};
   if (q) {
     where.OR = [
-      { name: { contains: q, mode: "insensitive" } },
-      { village: { contains: q, mode: "insensitive" } },
+      { name: { contains: q } },
+      { village: { contains: q } },
       { voterId: { contains: q } },
       { mobile1: { contains: q } },
       { mobile2: { contains: q } },
-      { boothName: { contains: q, mode: "insensitive" } },
+      { boothName: { contains: q } },
+      { familyId: { contains: q } },
     ];
   }
   if (colour !== undefined) where.colourCode = colour;
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
   if (star !== undefined) where.starVoter = star;
   if (dead !== undefined) where.dead = dead;
 
-  // Export up to, say, 50k rows to avoid blowing memory; bump as you wish
+  // Export up to 50k rows (tweak as needed)
   const MAX = Math.min(50000, Number(searchParams.get("max") || "20000"));
 
   const rows = await prisma.voter.findMany({
@@ -76,19 +77,12 @@ export async function GET(req: NextRequest) {
       dead: true,
       caste: true,
       profession: true,
-      personnel: true,
-      society: true,
-      flatNo: true,
-      newAddress: true,
       demands: true,
-      extraInfo1: true,
-      extraInfo2: true,
-      extraInfo3: true,
-      extraInfo4: true,
-      extraInfo5: true,
-      extraCheck1: true,
-      extraCheck2: true,
+      extraInfo: true,
       dob: true,
+      familyId: true,
+      relationToHead: true,
+      headId: true,
       updatedAt: true,
       createdAt: true,
     },
@@ -99,9 +93,9 @@ export async function GET(req: NextRequest) {
     "boothName","boothNo","partNo","srn",
     "mobile1","mobile2","email",
     "colourCode","voted","starVoter","dead",
-    "caste","profession","personnel","society","flatNo","newAddress","demands",
-    "extraInfo1","extraInfo2","extraInfo3","extraInfo4","extraInfo5",
-    "extraCheck1","extraCheck2","dob","createdAt","updatedAt"
+    "caste","profession","demands","extraInfo","dob",
+    "familyId","relationToHead","headId",
+    "createdAt","updatedAt"
   ];
 
   const lines = [header.join(",")];
@@ -128,19 +122,12 @@ export async function GET(req: NextRequest) {
       esc(r.dead ? 1 : 0),
       esc(r.caste ?? ""),
       esc(r.profession ?? ""),
-      esc(r.personnel ?? ""),
-      esc(r.society ?? ""),
-      esc(r.flatNo ?? ""),
-      esc(r.newAddress ?? ""),
       esc(r.demands ?? ""),
-      esc(r.extraInfo1 ?? ""),
-      esc(r.extraInfo2 ?? ""),
-      esc(r.extraInfo3 ?? ""),
-      esc(r.extraInfo4 ?? ""),
-      esc(r.extraInfo5 ?? ""),
-      esc(r.extraCheck1 ?? ""),
-      esc(r.extraCheck2 ?? ""),
+      esc(r.extraInfo ?? ""),
       esc(r.dob ? r.dob.toISOString().slice(0, 10) : ""),
+      esc(r.familyId ?? ""),
+      esc(r.relationToHead ?? ""),
+      esc(r.headId ? r.headId.toString() : ""),
       esc(r.createdAt.toISOString()),
       esc(r.updatedAt.toISOString()),
     ].join(","));
