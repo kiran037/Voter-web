@@ -1,3 +1,4 @@
+// // src/app/signin/page.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -32,7 +33,7 @@ export default function SignInPage() {
 
   const otpInputRef = useRef<HTMLInputElement>(null);
 
-  // If already authed, bounce away
+  // Already authed? redirect
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -110,7 +111,9 @@ export default function SignInPage() {
       }
       setStep("done");
       setMsg("✓ Signed in successfully. Redirecting…");
+      // Ensure header sees the cookie immediately
       router.replace(next);
+      router.refresh();
     } finally {
       setLoading(false);
     }
@@ -124,48 +127,32 @@ export default function SignInPage() {
     <>
       <style jsx>{`
         @keyframes slideUp {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
         }
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        .slide-up {
-          animation: slideUp 0.4s ease-out;
-        }
-        .fade-in {
-          animation: fadeIn 0.3s ease-out;
-        }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .slide-up { animation: slideUp 0.4s ease-out; }
+        .fade-in { animation: fadeIn 0.3s ease-out; }
       `}</style>
 
       <main className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           {/* Logo & Header */}
           <div className="text-center mb-8 slide-up">
-            <div className="inline-flex items-center justify-center w-16 h-16 mb-4 rounded-2xl bg-gradient-to-br from-[#EF3340] to-[#C82333] shadow-lg">
+            <div className="inline-flex items-center justify-center w-16 h-16 mb-4 ">
               <Image
-                src="/logo.svg"
+                src="/logo.png"  // <-- use png present in /public
                 alt="Udaipur Voters"
-                width={32}
-                height={32}
+                width={40}
+                height={40}
                 className="object-contain"
-                onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
               />
             </div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
               {mode === "login" ? "Sign In" : "Create Account"}
             </h1>
             <p className="text-gray-600">
-              {mode === "login" 
-                ? "Welcome back, you've been missed!" 
-                : "Join us and make your voice heard"}
+              {mode === "login" ? "Welcome back, you've been missed!" : "Join us and make your voice heard"}
             </p>
           </div>
 
@@ -175,21 +162,13 @@ export default function SignInPage() {
             <div className="flex gap-2 p-1 bg-gray-100 rounded-xl mb-6">
               <button
                 onClick={() => { setMode("login"); setStep("idle"); setMsg(""); setCode(""); }}
-                className={`flex-1 py-2.5 rounded-lg font-medium transition-all duration-300 ${
-                  mode === "login"
-                    ? "bg-white text-gray-900 shadow-sm"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
+                className={`flex-1 py-2.5 rounded-lg font-medium transition-all duration-300 ${mode === "login" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:text-gray-900"}`}
               >
                 Sign In
               </button>
               <button
                 onClick={() => { setMode("register"); setStep("idle"); setMsg(""); setCode(""); }}
-                className={`flex-1 py-2.5 rounded-lg font-medium transition-all duration-300 ${
-                  mode === "register"
-                    ? "bg-white text-gray-900 shadow-sm"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
+                className={`flex-1 py-2.5 rounded-lg font-medium transition-all duration-300 ${mode === "register" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:text-gray-900"}`}
               >
                 Sign Up
               </button>
@@ -199,13 +178,10 @@ export default function SignInPage() {
             <div className="space-y-4">
               {/* Phone Input */}
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700">
-                  Phone Number
-                </label>
+                <label className="block text-sm font-medium text-gray-700">Phone Number</label>
                 <div className="relative">
                   <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center gap-2 text-gray-500 border-r pr-3">
-                    <Phone size={18} />
-                    <span className="text-sm font-medium">+91</span>
+                    <Phone size={18} /><span className="text-sm font-medium">+91</span>
                   </div>
                   <input
                     value={phone}
@@ -224,9 +200,7 @@ export default function SignInPage() {
               {/* Name Input (Register only) */}
               {mode === "register" && (
                 <div className="space-y-2 fade-in">
-                  <label className="block text-sm font-medium text-gray-700">
-                    Full Name
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700">Full Name</label>
                   <div className="relative">
                     <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                     <input
@@ -243,16 +217,14 @@ export default function SignInPage() {
               {/* OTP Input */}
               {step === "sent" && (
                 <div className="space-y-2 fade-in">
-                  <label className="block text-sm font-medium text-gray-700">
-                    Enter OTP
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700">Enter OTP</label>
                   <div className="relative">
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                     <input
                       ref={otpInputRef}
                       value={code}
                       onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                      onKeyDown={handleOtpKey}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); verify(); } }}
                       className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none tracking-widest text-center text-lg font-semibold transition-colors"
                       placeholder="• • • • • •"
                       inputMode="numeric"
@@ -268,8 +240,8 @@ export default function SignInPage() {
                 <button
                   onClick={step === "sent" ? verify : sendOtp}
                   disabled={
-                    loading || 
-                    !phone.trim() || 
+                    loading ||
+                    !phone.trim() ||
                     phone.length !== 10 ||
                     (mode === "register" && !name.trim()) ||
                     (step === "sent" && code.length < 4)
@@ -294,13 +266,15 @@ export default function SignInPage() {
 
               {/* Message */}
               {msg && (
-                <div className={`p-3 rounded-xl text-sm fade-in ${
-                  msg.includes("✓") || msg.includes("found") 
-                    ? "bg-green-50 text-green-700 border border-green-200" 
-                    : msg.includes("Failed") || msg.includes("Invalid")
-                    ? "bg-red-50 text-red-700 border border-red-200"
-                    : "bg-blue-50 text-blue-700 border border-blue-200"
-                }`}>
+                <div
+                  className={`p-3 rounded-xl text-sm fade-in ${
+                    msg.includes("✓") || msg.includes("found")
+                      ? "bg-green-50 text-green-700 border border-green-200"
+                      : msg.includes("Failed") || msg.includes("Invalid")
+                      ? "bg-red-50 text-red-700 border border-red-200"
+                      : "bg-blue-50 text-blue-700 border border-blue-200"
+                  }`}
+                >
                   {msg}
                 </div>
               )}

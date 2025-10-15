@@ -1,11 +1,10 @@
-// app/api/voters/import/route.ts
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";
 import { Buffer } from "node:buffer";
 
-export const runtime = "nodejs"; // we need Node APIs for XLSX/Buffer
+export const runtime = "nodejs"; // Node APIs (Buffer) + SheetJS
 
 type Colour = "OUR" | "OPPOSITE" | "DOUBTFUL" | "OTHER";
 
@@ -55,49 +54,22 @@ function parseCsv(buf: Buffer): Record<string, string>[] {
   return rows;
 }
 
-// --- robust SheetJS dynamic import (handles ESM/CJS variants) ---
-async function loadSheetJS(): Promise<any | null> {
-  try {
-    // Try official ESM build first
-    // @ts-ignore
-    const m1 = await import("xlsx/xlsx.mjs");
-    // Some bundles expose default
-    // @ts-ignore
-    return (m1 && (m1 as any).read) ? m1 : ((m1 as any).default?.read ? (m1 as any).default : m1);
-  } catch {}
-  try {
-    // Fallback to main "xlsx" package (CJS in many setups)
-    const m2 = await import("xlsx");
-    // @ts-ignore
-    return (m2 as any).read ? m2 : (m2 as any).default || m2;
-  } catch {}
-  try {
-    // Another ESM path some setups prefer
-    // @ts-ignore
-    const m3 = await import("xlsx/dist/xlsx.full.mjs");
-    // @ts-ignore
-    return (m3 as any).read ? m3 : (m3 as any).default || m3;
-  } catch {}
-  return null;
-}
-
+// --- SheetJS loader (single, reliable path) ---
 async function parseXlsx(buf: Buffer): Promise<Record<string, any>[]> {
-  const XLSX = await loadSheetJS();
-  if (!XLSX || typeof XLSX.read !== "function") {
-    // Don’t throw 415 — return a clear 400 to the client
-    const err = new Error(
-      "XLSX parser not available. Ensure `npm i xlsx` is installed and server is running with Node runtime."
-    );
-    (err as any).status = 400;
-    throw err;
+  try {
+    const mod = await import("xlsx"); // rely on package root
+    const XLSX: any = (mod as any).default?.read ? (mod as any).default : mod;
+
+    const wb = XLSX.read(buf, { type: "buffer" });
+    const sheetName = wb.SheetNames?.[0];
+    if (!sheetName) return [];
+    const sheet = wb.Sheets[sheetName];
+    return XLSX.utils.sheet_to_json(sheet, { raw: false }) as Record<string, any>[];
+  } catch (err: any) {
+    const e = new Error("XLSX parsing not available. Ensure `xlsx` is installed.");
+    (e as any).status = 400;
+    throw e;
   }
-  // Accept Buffer or Uint8Array; NodeJS Buffer works with type:'buffer'
-  const wb = XLSX.read(buf, { type: "buffer" });
-  const sheetName = wb.SheetNames?.[0];
-  if (!sheetName) return [];
-  const sheet = wb.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(sheet, { raw: false });
-  return rows as Record<string, any>[];
 }
 
 // Map input row -> voter fields expected by Prisma
@@ -139,7 +111,7 @@ export async function POST(req: NextRequest) {
   const file = form?.get("file");
   if (!file || !(file instanceof File)) {
     return NextResponse.json({ error: "file required (CSV/XLSX)" }, { status: 400 });
-  }
+    }
 
   const filename = file.name || "upload";
   const buf = Buffer.from(await file.arrayBuffer());
