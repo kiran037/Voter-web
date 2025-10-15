@@ -9,7 +9,6 @@ export default async function HomePageServer() {
   const token = jar.get(process.env.SESSION_COOKIE_NAME || "session")?.value;
 
   if (!token) {
-    // not logged in → go to signin and come back here
     redirect("/signin?next=/");
   }
 

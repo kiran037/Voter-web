@@ -90,14 +90,30 @@ export async function createOrGetUser(phone: string) {
   return user;
 }
 
-// Helper only for setting cookie on a response (not on server store)
-export function setJwtCookie(res: NextResponse, token: string, maxAgeSeconds: number) {
+/**
+ * Set the JWT cookie on a NextResponse.
+ * Accepts either a relative max-age in seconds OR an absolute Date expiry.
+ */
+export function setJwtCookie(res: NextResponse, token: string, exp: number | Date) {
+  let maxAgeSeconds: number | undefined;
+  let expires: Date | undefined;
+
+  if (typeof exp === "number") {
+    maxAgeSeconds = exp;
+  } else if (exp instanceof Date) {
+    // Convert absolute Date -> max-age (seconds). Also set `expires` for clarity.
+    const deltaSec = Math.max(0, Math.floor((exp.getTime() - Date.now()) / 1000));
+    maxAgeSeconds = deltaSec;
+    expires = exp;
+  }
+
   res.cookies.set(COOKIE_NAME, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: maxAgeSeconds,
+    ...(typeof maxAgeSeconds === "number" ? { maxAge: maxAgeSeconds } : {}),
+    ...(expires ? { expires } : {}),
   });
 }
 
@@ -117,7 +133,11 @@ export async function getAuthedUser(req?: NextRequest) {
     const payload = await verifyJwt(token);
     const idStr = String((payload as any)?.sub ?? (payload as any)?.uid ?? "");
     let id: bigint | null = null;
-    try { id = BigInt(idStr); } catch { id = null; }
+    try {
+      id = BigInt(idStr);
+    } catch {
+      id = null;
+    }
     if (!id) return null;
 
     const user = await prisma.user.findUnique({
