@@ -1,12 +1,13 @@
-// app/api/imports/[batchId]/rows/route.ts
+// // app/api/imports/[batchId]/rows/route.ts
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAuthedUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/role";
 
 function toId(s: string) { try { return BigInt(s); } catch { return null; } }
 
 type RowStatus = "SUCCESS" | "FAILED" | "SKIPPED";
-
 type ImportRow = {
   id: bigint;
   batchId: bigint;
@@ -20,6 +21,10 @@ type ImportRow = {
 };
 
 export async function GET(req: NextRequest, { params }: { params: { batchId: string } }) {
+  const user = await getAuthedUser(req);
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!isAdmin(user)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
   const { searchParams } = new URL(req.url);
   const statusParam = searchParams.get("status");
   const page = Math.max(1, Number(searchParams.get("page") || "1"));
@@ -28,7 +33,6 @@ export async function GET(req: NextRequest, { params }: { params: { batchId: str
   const batchId = toId(params.batchId);
   if (!batchId) return NextResponse.json({ error: "invalid id" }, { status: 400 });
 
-  // Build where filter
   const where: Record<string, any> = { batchId };
   if (statusParam) {
     const s = statusParam.toUpperCase();
@@ -73,10 +77,5 @@ export async function GET(req: NextRequest, { params }: { params: { batchId: str
     createdAt: r.createdAt,
   }));
 
-  return NextResponse.json({
-    page,
-    limit,
-    total,
-    items,
-  });
+  return NextResponse.json({ page, limit, total, items });
 }

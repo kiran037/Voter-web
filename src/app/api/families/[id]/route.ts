@@ -1,4 +1,4 @@
-// app/api/families/[id]/route.ts
+// // src/app/api/families/[id]/route.ts
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -6,14 +6,19 @@ import { getAuthedUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-// Standard App Router signature
-export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
-  const raw = decodeURIComponent((params.id || "").trim());
-  if (!raw) return NextResponse.json({ error: "invalid family id" }, { status: 400 });
+// Helpers
+async function readFamilyParam(paramsPromise: Promise<{ id: string }>) {
+  const { id } = await paramsPromise;
+  return decodeURIComponent((id || "").trim());
+}
 
-  // In the new schema, family = all voters sharing the same string familyId
+// GET /api/families/[id]
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const familyId = await readFamilyParam(ctx.params);
+  if (!familyId) return NextResponse.json({ error: "invalid family id" }, { status: 400 });
+
   const members = await prisma.voter.findMany({
-    where: { familyId: raw },
+    where: { familyId },
     select: {
       id: true,
       name: true,
@@ -30,10 +35,9 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
   }
 
   // Determine head:
-  // 1) explicit relationToHead === 'HEAD'
-  // 2) otherwise infer: someone whose id appears as others' headId the most
-  let head =
-    members.find((m) => m.relationToHead === "HEAD") ??
+  const explicitHead = members.find((m) => m.relationToHead === "HEAD");
+  const inferredHead =
+    explicitHead ??
     (() => {
       const counts = new Map<string, number>();
       for (const m of members) {
@@ -47,8 +51,8 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
     })();
 
   return NextResponse.json({
-    familyId: raw,
-    head: head ? { id: head.id.toString(), name: head.name } : null,
+    familyId,
+    head: inferredHead ? { id: inferredHead.id.toString(), name: inferredHead.name } : null,
     members: members.map((m) => ({
       id: m.id.toString(),
       name: m.name,
@@ -60,34 +64,24 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
   });
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+// PUT /api/families/[id]
+export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const familyId = decodeURIComponent((params.id || "").trim());
+  const familyId = await readFamilyParam(ctx.params);
   if (!familyId) return NextResponse.json({ error: "invalid family id" }, { status: 400 });
 
   const body = await req.json().catch(() => ({} as any));
 
-  // Back-compat: accept headVoterId (string or null). Also accept "headId".
+  // Accept headVoterId or headId (string | null)
   let headStr: string | null | undefined = undefined;
-  if (Object.prototype.hasOwnProperty.call(body, "headVoterId")) {
-    headStr = body.headVoterId;
-  } else if (Object.prototype.hasOwnProperty.call(body, "headId")) {
-    headStr = body.headId;
-  }
+  if (Object.prototype.hasOwnProperty.call(body, "headVoterId")) headStr = body.headVoterId;
+  else if (Object.prototype.hasOwnProperty.call(body, "headId")) headStr = body.headId;
 
-  // If headStr is provided, normalize family:
-  //  - the chosen head must be a member of this family (or null to clear all heads)
-  //  - set chosen relationToHead='HEAD' & headId=null
-  //  - set all other members headId=<head.id> and demote accidental HEADs to OTHER
   if (headStr !== undefined) {
     if (headStr === null) {
-      // Clear head assignments but keep the family grouping
-      const members = await prisma.voter.findMany({
-        where: { familyId },
-        select: { id: true },
-      });
+      const members = await prisma.voter.findMany({ where: { familyId }, select: { id: true } });
       if (members.length > 0) {
         await prisma.$transaction(
           members.map((m) =>
@@ -126,15 +120,14 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     if (!head) return NextResponse.json({ error: "head not in this family" }, { status: 400 });
 
     const tx: any[] = [];
-
-    // Ensure head points to nobody and is marked HEAD
+    // Mark head
     tx.push(
       prisma.voter.update({
         where: { id: head.id },
         data: { relationToHead: "HEAD" as any, headId: null },
       }),
     );
-
+    // Point everyone else to head; demote accidental HEADs
     for (const m of members) {
       if (m.id === head.id) continue;
       tx.push(
@@ -152,18 +145,13 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ ok: true, headId: head.id.toString() });
   }
 
-  // No recognized mutating keys; nothing to do
+  // Nothing to change
   return NextResponse.json({ ok: true });
 }
 
-/**
- * DELETE "family": since there is no Family table, this "disbands" the family.
- * It clears familyId, relationToHead, headId for all members with this familyId.
- * Use carefully!
- */
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  // (Match your earlier behavior: no auth required by default; change if needed)
-  const familyId = decodeURIComponent((params.id || "").trim());
+// DELETE /api/families/[id]
+export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const familyId = await readFamilyParam(ctx.params);
   if (!familyId) return NextResponse.json({ error: "invalid family id" }, { status: 400 });
 
   const count = await prisma.voter.updateMany({

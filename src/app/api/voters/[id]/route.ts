@@ -3,13 +3,10 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/role";
 import type { FamilyIdType, FamilyRole, ColourCode, Gender } from "@prisma/client";
 
-function toId(param: string) {
-  try { return BigInt(param); } catch { return null; }
-}
-
-// Next.js 15 dynamic route: params can be awaited
+function toId(param: string) { try { return BigInt(param); } catch { return null; } }
 type ParamsPromise = { params: Promise<{ id: string }> };
 
 export async function GET(_: NextRequest, ctx: ParamsPromise) {
@@ -17,17 +14,15 @@ export async function GET(_: NextRequest, ctx: ParamsPromise) {
   const id = toId(idStr);
   if (!id) return NextResponse.json({ error: "invalid id" }, { status: 400 });
 
-  // fetch voter + resolve head (if any) + minimal family peek (members count and a few names)
   const v = await prisma.voter.findUnique({
     where: { id },
     include: {
-      head: { select: { id: true, name: true } },             // self-ref head
-      members: { select: { id: true }, take: 1 },             // who point to this voter as head
+      head: { select: { id: true, name: true } },
+      members: { select: { id: true }, take: 1 },
     },
   });
   if (!v) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  // If you want to preview family members, get a few with same familyId
   let familyPreview: Array<{ id: string; name: string }> = [];
   if (v.familyId) {
     const others = await prisma.voter.findMany({
@@ -64,13 +59,11 @@ export async function GET(_: NextRequest, ctx: ParamsPromise) {
     demands: v.demands,
     extraInfo: v.extraInfo,
     dob: v.dob,
-    // family linkage (string code + typing)
     familyId: v.familyId,
     familyIdType: v.familyIdType as FamilyIdType | null,
     relationToHead: v.relationToHead as FamilyRole | null,
     headId: v.headId ? v.headId.toString() : null,
     head: v.head ? { id: v.head.id.toString(), name: v.head.name } : null,
-    // small preview for UI
     familyPreview,
     createdAt: v.createdAt,
     updatedAt: v.updatedAt,
@@ -80,6 +73,8 @@ export async function GET(_: NextRequest, ctx: ParamsPromise) {
 export async function PUT(req: NextRequest, ctx: ParamsPromise) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // If you ever want edits admin-only, just uncomment:
+  // if (!isAdmin(user)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const { id: idStr } = await ctx.params;
   const id = toId(idStr);
@@ -88,20 +83,15 @@ export async function PUT(req: NextRequest, ctx: ParamsPromise) {
   try {
     const body = await req.json();
 
-    // parse enums safely
     const colour = typeof body.colourCode === "string" ? (body.colourCode.toUpperCase() as ColourCode) : undefined;
-    const famType =
-      typeof body.familyIdType === "string" ? (body.familyIdType.toUpperCase() as FamilyIdType) : undefined;
-    const rel =
-      typeof body.relationToHead === "string" ? (body.relationToHead.toUpperCase() as FamilyRole) : undefined;
+    const famType = typeof body.familyIdType === "string" ? (body.familyIdType.toUpperCase() as FamilyIdType) : undefined;
+    const rel = typeof body.relationToHead === "string" ? (body.relationToHead.toUpperCase() as FamilyRole) : undefined;
 
-    // parse numeric-ish fields
     const boothNo = typeof body.boothNo === "number" ? body.boothNo : undefined;
     const partNo  = typeof body.partNo  === "number" ? body.partNo  : undefined;
     const srn     = typeof body.srn     === "number" ? body.srn     : undefined;
     const age     = typeof body.age     === "number" ? body.age     : undefined;
 
-    // parse headId (bigint) if provided
     let headIdToSet: bigint | null | undefined = undefined;
     if (body.hasOwnProperty("headId")) {
       if (body.headId === null) headIdToSet = null;
@@ -116,7 +106,6 @@ export async function PUT(req: NextRequest, ctx: ParamsPromise) {
       }
     }
 
-    // familyId is a STRING in schema; allow set/clear
     const familyIdToSet: string | null | undefined =
       body.hasOwnProperty("familyId")
         ? (typeof body.familyId === "string" ? body.familyId.trim() || null : null)
@@ -148,8 +137,6 @@ export async function PUT(req: NextRequest, ctx: ParamsPromise) {
         demands: typeof body.demands === "string" ? body.demands : undefined,
         extraInfo: typeof body.extraInfo === "string" ? body.extraInfo : undefined,
         dob: body.dob ? new Date(body.dob) : undefined,
-
-        // family linkage (string code + enums)
         familyId: familyIdToSet,
         familyIdType: famType,
         relationToHead: rel,
@@ -170,27 +157,19 @@ export async function PUT(req: NextRequest, ctx: ParamsPromise) {
 export async function DELETE(req: NextRequest, ctx: ParamsPromise) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!isAdmin(user)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const { id: idStr } = await ctx.params;
   const id = toId(idStr);
   if (!id) return NextResponse.json({ error: "invalid id" }, { status: 400 });
 
   try {
-    // Before delete: null out dependents' headId to avoid FK restriction
-    await prisma.voter.updateMany({
-      where: { headId: id },
-      data: { headId: null, relationToHead: null },
-    });
-
+    await prisma.voter.updateMany({ where: { headId: id }, data: { headId: null, relationToHead: null } });
     await prisma.voter.delete({ where: { id } });
-
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     if (e?.code === "P2003") {
-      return NextResponse.json(
-        { error: "cannot delete voter due to related records (FK constraint)" },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: "cannot delete voter due to related records (FK constraint)" }, { status: 409 });
     }
     return NextResponse.json({ error: e?.message || "failed" }, { status: 500 });
   }

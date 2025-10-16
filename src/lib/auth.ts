@@ -86,6 +86,7 @@ export async function verifyOtp(phone: string, code: string, purpose: Purpose = 
 
 export async function createOrGetUser(phone: string) {
   let user = await prisma.user.findUnique({ where: { phone } });
+  // default to STAFF if role not set/created
   if (!user) user = await prisma.user.create({ data: { phone, role: "STAFF" } });
   return user;
 }
@@ -93,6 +94,7 @@ export async function createOrGetUser(phone: string) {
 /**
  * Set the JWT cookie on a NextResponse.
  * Accepts either a relative max-age in seconds OR an absolute Date expiry.
+ * This fixes the previous "Date is not assignable to number" issue.
  */
 export function setJwtCookie(res: NextResponse, token: string, exp: number | Date) {
   let maxAgeSeconds: number | undefined;

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 
 import type { Voter, ListRow, ColourCode, FamilyRole } from "@/types/voter";
+import { useMe } from "@/hooks/useMe";
 
 import VoterHeader from "@/components/voters/VoterHeader";
 import DetailsCard from "@/components/voters/DetailsCard";
@@ -14,11 +15,13 @@ import FamilyEditCard from "@/components/voters/FamilyEditCard";
 import FamilyCard from "@/components/voters/FamilyCard";
 import SurveyCard from "@/components/voters/SurveyCard";
 
+// 🔹 NEW: import the share action bar
+import ShareActions from "@/components/voters/ShareActions";
+
 type Tab = "details" | "family" | "survey";
 
 // --- helpers ---
 function calcAgeFromDOB(dobISO: string): number | null {
-  // dobISO expected "yyyy-mm-dd"
   const parts = dobISO?.split("-").map((x) => Number(x));
   if (!parts || parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
   const [y, m, d] = parts;
@@ -37,6 +40,7 @@ function calcAgeFromDOB(dobISO: string): number | null {
 
 export default function VoterPage() {
   const { id } = useParams<{ id: string }>();
+  const { isAdmin } = useMe();
 
   const [tab, setTab] = useState<Tab>("details");
 
@@ -53,16 +57,13 @@ export default function VoterPage() {
       const r = await fetch(`/api/voters/${id}`, { cache: "no-store", signal });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "Failed to load");
-      // normalize dob to yyyy-mm-dd (server may return ISO with time)
       const dob = j.dob ? String(j.dob).slice(0, 10) : null;
       setVoter({ ...j, dob });
     } catch (e: any) {
       if (signal?.aborted) return;
       setErr(e?.message || "Failed to load");
       setVoter(null);
-      toast.error("Failed to load voter", {
-        description: e?.message || "Please try again.",
-      });
+      toast.error("Failed to load voter", { description: e?.message || "Please try again." });
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
@@ -78,7 +79,6 @@ export default function VoterPage() {
   function setField<K extends keyof Voter>(k: K, v: Voter[K]) {
     setVoter((s) => {
       if (!s) return s;
-      // when DOB changes, recompute age automatically
       if (k === "dob") {
         const nextDob = (v as unknown as string) || "";
         const nextAge = nextDob ? calcAgeFromDOB(nextDob) : null;
@@ -88,23 +88,24 @@ export default function VoterPage() {
     });
   }
 
-  // ----- edit states -----
+  // ----- edit states (admins only for full edit) -----
   const [editDetails, setEditDetails] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
 
   const [editSurvey, setEditSurvey] = useState(false);
   const [savingSurvey, setSavingSurvey] = useState(false);
 
-  // ----- save handlers -----
+  // ----- save handlers (admins) -----
   async function saveDetails(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!voter) return;
+    if (!voter || !isAdmin) return;
+
     setSavingDetails(true);
     try {
       const payload = {
         name: voter.name?.trim(),
         voterId: voter.voterId?.trim() || null,
-        age: voter.age ?? null, // already auto-updated on DOB change
+        age: voter.age ?? null,
         gender: voter.gender || null,
         village: voter.village?.trim() || null,
         houseNo: voter.houseNo?.trim() || null,
@@ -122,7 +123,7 @@ export default function VoterPage() {
         dead: !!voter.dead,
         dob: voter.dob || null,
 
-        // family fields may also be adjusted here via DetailsCard/FamilyEditCard
+        // family fields
         familyId: voter.familyId?.trim() || null,
         familyIdType: voter.familyIdType || null,
         relationToHead: voter.relationToHead || null,
@@ -139,13 +140,9 @@ export default function VoterPage() {
 
       setEditDetails(false);
       await load();
-      toast.success("Voter details saved", {
-        description: "All changes have been updated.",
-      });
+      toast.success("Voter details saved", { description: "All changes have been updated." });
     } catch (e: any) {
-      toast.error("Save failed", {
-        description: e?.message || "Please try again.",
-      });
+      toast.error("Save failed", { description: e?.message || "Please try again." });
     } finally {
       setSavingDetails(false);
     }
@@ -158,7 +155,8 @@ export default function VoterPage() {
 
   async function saveSurvey(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!voter) return;
+    if (!voter || !isAdmin) return;
+
     setSavingSurvey(true);
     try {
       const payload = {
@@ -177,13 +175,9 @@ export default function VoterPage() {
 
       setEditSurvey(false);
       await load();
-      toast.success("Survey updated", {
-        description: "Survey information has been saved.",
-      });
+      toast.success("Survey updated", { description: "Survey information has been saved." });
     } catch (e: any) {
-      toast.error("Save failed", {
-        description: e?.message || "Please try again.",
-      });
+      toast.error("Save failed", { description: e?.message || "Please try again." });
     } finally {
       setSavingSurvey(false);
     }
@@ -192,6 +186,30 @@ export default function VoterPage() {
   function cancelSurvey() {
     setEditSurvey(false);
     load();
+  }
+
+  // ----- Non-admin: allow ONLY phone edits (auto-save on blur) -----
+  async function onSaveContacts(mobile1?: string, mobile2?: string) {
+    if (!voter || isAdmin) return; // admins use header Save
+
+    try {
+      const payload: Partial<Voter> = {
+        mobile1: (mobile1 ?? voter.mobile1 ?? "").trim() || null,
+        mobile2: (mobile2 ?? voter.mobile2 ?? "").trim() || null,
+      };
+      const r = await fetch(`/api/voters/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || "Update failed");
+      }
+      toast.success("Contact updated", { description: "Phone number(s) saved." });
+    } catch (e: any) {
+      toast.error("Update failed", { description: e?.message || "Please try again." });
+    }
   }
 
   // ----- family tab (load by familyId when opened) -----
@@ -220,7 +238,6 @@ export default function VoterPage() {
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j.error || "Failed to load family");
 
-        // ensure items have familyId for exact filter, fallback via detail fetch if missing
         const raw: any[] = Array.isArray(j?.items) ? j.items : [];
         const ensured = await Promise.all(
           raw.map(async (row) => {
@@ -248,9 +265,7 @@ export default function VoterPage() {
         if (!ctrl.signal.aborted) {
           setFamErr(e?.message || "Failed to load family");
           setFamily([]);
-          toast.error("Family load failed", {
-            description: e?.message || "Please try again.",
-          });
+          toast.error("Family load failed", { description: e?.message || "Please try again." });
         }
       } finally {
         if (!ctrl.signal.aborted) setFamLoading(false);
@@ -262,6 +277,10 @@ export default function VoterPage() {
 
   async function makeHead() {
     if (!voter) return;
+    if (!isAdmin) {
+      toast.error("Admins only", { description: "You don't have permission to change head." });
+      return;
+    }
     const payload = {
       familyId: voter.familyId?.trim() || `FAM-${voter.id}`,
       familyIdType: voter.familyIdType || "OTHER",
@@ -275,15 +294,11 @@ export default function VoterPage() {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
-      toast.error("Action failed", {
-        description: j.error || "Could not set head.",
-      });
+      toast.error("Action failed", { description: j.error || "Could not set head." });
       return;
     }
     await load();
-    toast.success("Head updated", {
-      description: `${voter.name} is now marked as Head of Family.`,
-    });
+    toast.success("Head updated", { description: `${voter.name} is now marked as Head of Family.` });
   }
 
   // ----- UI states -----
@@ -315,16 +330,15 @@ export default function VoterPage() {
     );
   }
 
-  // which tab is currently editable (for header buttons)
   const whichEditable: "details" | "survey" = tab === "details" ? "details" : "survey";
   const isEditing = tab === "details" ? editDetails : tab === "survey" ? editSurvey : false;
   const saving = tab === "details" ? savingDetails : savingSurvey;
 
   return (
     <div className="mx-auto w-full p-4 md:p-6 space-y-6">
-      {/* Fancy header with edit/save buttons */}
       <VoterHeader
         voter={voter}
+        family={family}            // 🔹 NEW
         tab={tab}
         onEdit={() => (tab === "details" ? setEditDetails(true) : setEditSurvey(true))}
         onSave={() => (tab === "details" ? saveDetails() : saveSurvey())}
@@ -332,20 +346,16 @@ export default function VoterPage() {
         saving={saving}
         isEditing={isEditing}
         which={whichEditable}
+        canEditAll={isAdmin}
       />
-
-      {/* Tabs */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-lg overflow-hidden">
         <div className="flex flex-wrap gap-2 p-2 bg-slate-50 border-b border-slate-200">
           {(["details", "family", "survey"] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
-                tab === t
-                  ? "bg-white text-[#EF3340] shadow border border-slate-200"
-                  : "text-slate-700 hover:text-slate-900 hover:bg-white/60"
-              }`}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${tab === t ? "bg-white text-[#EF3340] shadow border border-slate-200" : "text-slate-700 hover:text-slate-900 hover:bg-white/60"
+                }`}
             >
               {t === "details" ? "Details" : t === "family" ? "Family" : "Survey"}
             </button>
@@ -355,23 +365,22 @@ export default function VoterPage() {
         <div className="p-6">
           {tab === "details" && (
             <div className="space-y-6">
-              <DetailsCard voter={voter} edit={editDetails} setField={setField} />
-              {/* Family quick edit block (head-based) */}
-              <FamilyEditCard voter={voter} edit={editDetails} setField={setField} onMakeHead={makeHead} />
+              <DetailsCard
+                voter={voter}
+                edit={editDetails && isAdmin}
+                setField={setField}
+                isAdmin={isAdmin}
+                onSaveContacts={onSaveContacts}
+              />
+              <FamilyEditCard voter={voter} edit={editDetails && isAdmin} setField={setField} onMakeHead={makeHead} />
             </div>
           )}
 
           {tab === "family" && (
-            <FamilyCard
-              voter={voter}
-              family={family}
-              famLoading={famLoading}
-              famErr={famErr}
-              onMakeHead={makeHead}
-            />
+            <FamilyCard voter={voter} family={family} famLoading={famLoading} famErr={famErr} onMakeHead={makeHead} />
           )}
 
-          {tab === "survey" && <SurveyCard voter={voter} edit={editSurvey} setField={setField} />}
+          {tab === "survey" && <SurveyCard voter={voter} edit={editSurvey && isAdmin} setField={setField} />}
         </div>
       </div>
     </div>

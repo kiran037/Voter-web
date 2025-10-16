@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { User as UserIcon, ChevronDown, LogOut } from "lucide-react";
 
-type Me = { id: string; phone: string; name: string | null };
+type Me = { id: string; phone: string; name: string | null; role: "ADMIN" | "STAFF" };
 
 export default function Header() {
   const pathname = usePathname();
@@ -22,7 +22,7 @@ export default function Header() {
 
   const hide = pathname?.startsWith("/signin") ?? false;
 
-  // Load current user
+  // Load current user (now includes role)
   useEffect(() => {
     if (hide) return;
     let cancelled = false;
@@ -106,6 +106,16 @@ export default function Header() {
     .toUpperCase()
     .slice(0, 2);
 
+  const isAdmin = (me?.role ?? "STAFF") === "ADMIN";
+
+  // Active pill styling for nav links
+  const navCls = (active: boolean) =>
+    `px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
+      active
+        ? "bg-white text-[#EF3340] shadow border border-slate-200"
+        : "text-slate-700 hover:text-slate-900 hover:bg-white/60"
+    }`;
+
   if (hide) return null;
 
   return (
@@ -120,7 +130,8 @@ export default function Header() {
           }
         }
         @keyframes float {
-          0%, 100% {
+          0%,
+          100% {
             transform: translateY(0px);
           }
           50% {
@@ -148,7 +159,8 @@ export default function Header() {
           }
         }
         @keyframes pulse {
-          0%, 100% {
+          0%,
+          100% {
             box-shadow: 0 0 0 0 rgba(239, 51, 64, 0.4);
           }
           50% {
@@ -156,12 +168,7 @@ export default function Header() {
           }
         }
         .shimmer {
-          background: linear-gradient(
-            90deg,
-            transparent,
-            rgba(255, 255, 255, 0.6),
-            transparent
-          );
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
           background-size: 200% 100%;
           animation: shimmer 2s infinite;
         }
@@ -187,6 +194,7 @@ export default function Header() {
         }`}
       >
         <div className="mx-auto w-full px-4 h-16 flex items-center justify-between">
+          {/* Left: Logo + Brand */}
           <Link
             href="/"
             className="flex items-center gap-3 min-w-0 group relative overflow-hidden rounded-xl px-3 py-2 -ml-3 transition-all duration-300 hover:bg-gradient-to-r hover:from-red-50 hover:to-orange-50"
@@ -207,6 +215,19 @@ export default function Header() {
             </span>
           </Link>
 
+          {/* Middle: Nav links (Users visible only to ADMIN) */}
+          <nav className="hidden md:flex items-center gap-2">
+            <Link href="/" className={navCls(pathname === "/" || pathname?.startsWith("/?"))}>
+              Home
+            </Link>
+            {isAdmin && (
+              <Link href="/users" className={navCls(pathname?.startsWith("/users") ?? false)}>
+                Users
+              </Link>
+            )}
+          </nav>
+
+          {/* Right: Profile menu */}
           <div className="relative">
             <button
               ref={btnRef}
@@ -237,9 +258,7 @@ export default function Header() {
               </span>
               <ChevronDown
                 size={16}
-                className={`transition-all duration-300 ${
-                  open ? "rotate-180 text-white" : "text-gray-500"
-                }`}
+                className={`transition-all duration-300 ${open ? "rotate-180 text-white" : "text-gray-500"}`}
               />
             </button>
 
@@ -260,6 +279,30 @@ export default function Header() {
                     </div>
                   </div>
                 </div>
+
+                {/* Small-screen nav (duplicate for accessibility); Users visible only to ADMIN */}
+                <div className="md:hidden">
+                  <Link
+                    href="/"
+                    onClick={() => setOpen(false)}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gradient-to-r hover:from-red-50 hover:to-orange-50 transition-all duration-200"
+                    role="menuitem"
+                  >
+                    Home
+                  </Link>
+                  {isAdmin && (
+                    <Link
+                      href="/users"
+                      onClick={() => setOpen(false)}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gradient-to-r hover:from-red-50 hover:to-orange-50 transition-all duration-200"
+                      role="menuitem"
+                    >
+                      Users
+                    </Link>
+                  )}
+                  <div className="h-px bg-gray-200 mx-4" />
+                </div>
+
                 <button
                   onClick={() => {
                     setOpen(false);

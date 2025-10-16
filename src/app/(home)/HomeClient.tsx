@@ -10,12 +10,29 @@ import AddVoterModal from "@/components/home/AddVoterModal";
 import ImportModal from "@/components/home/ImportModal";
 import DeleteConfirmModal from "@/components/home/DeleteConfirmModal";
 
+
 const LIMIT = 50;
 
 export default function HomeClient() {
   const router = useRouter();
   const sp = useSearchParams();
   const pathname = usePathname();
+
+  // ---------- auth/role ----------
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/me", { cache: "no-store" });
+        if (!r.ok) return; // if unauthorized, header/layout should already redirect/signin
+        const j = await r.json().catch(() => ({}));
+        const role = j?.user?.role ?? "STAFF";
+        if (!cancelled) setIsAdmin(role === "ADMIN");
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // ---------- query state (synced to URL) ----------
   const [q, setQ] = useState(sp.get("q") ?? "");
@@ -119,22 +136,25 @@ export default function HomeClient() {
               <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white tracking-tight">Voters Database</h1>
               <p className="text-white/80 mt-0.5 sm:mt-1 text-sm sm:text-base">Manage, search and maintain your voter records</p>
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setAddOpen(true)}
-                className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 md:px-5 md:py-3 bg-white/90 backdrop-blur-xl text-[#EF3340] rounded-lg sm:rounded-xl text-sm sm:text-base font-semibold hover:bg-white hover:shadow-xl transition-all border border-white/50"
-              >
-                <Plus size={18} />
-                <span>Add</span>
-              </button>
-              <button
-                onClick={() => setImportOpen(true)}
-                className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 md:px-5 md:py-3 bg-white/90 backdrop-blur-xl text-slate-800 rounded-lg sm:rounded-xl text-sm sm:text-base font-semibold hover:bg-white hover:shadow-xl transition-all border border-white/50"
-              >
-                <Upload size={18} />
-                <span>Bulk</span>
-              </button>
-            </div>
+            {/* Admin-only action buttons */}
+            {isAdmin && (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setAddOpen(true)}
+                  className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 md:px-5 md:py-3 bg-white/90 backdrop-blur-xl text-[#EF3340] rounded-lg sm:rounded-xl text-sm sm:text-base font-semibold hover:bg-white hover:shadow-xl transition-all border border-white/50"
+                >
+                  <Plus size={18} />
+                  <span>Add</span>
+                </button>
+                <button
+                  onClick={() => setImportOpen(true)}
+                  className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 md:px-5 md:py-3 bg-white/90 backdrop-blur-xl text-slate-800 rounded-lg sm:rounded-xl text-sm sm:text-base font-semibold hover:bg-white hover:shadow-xl transition-all border border-white/50"
+                >
+                  <Upload size={18} />
+                  <span>Bulk</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Search row in hero */}
@@ -227,6 +247,7 @@ export default function HomeClient() {
         items={items}
         loading={loading}
         onDeleteAsk={(id) => setDeleteId(id)}
+        isAdmin={isAdmin}
       />
 
       {/* Pagination */}
@@ -263,9 +284,9 @@ export default function HomeClient() {
         </div>
       )}
 
-      {/* Modals */}
+      {/* Modals (they can stay mounted; only admins see the open buttons) */}
       <AddVoterModal
-        open={addOpen}
+        open={isAdmin && addOpen}
         onClose={() => setAddOpen(false)}
         onCreated={async () => {
           setPage(1);
@@ -273,7 +294,7 @@ export default function HomeClient() {
         }}
       />
       <ImportModal
-        open={importOpen}
+        open={isAdmin && importOpen}
         onClose={() => setImportOpen(false)}
         onImported={async () => {
           setPage(1);
@@ -282,7 +303,7 @@ export default function HomeClient() {
       />
       <DeleteConfirmModal
         id={deleteId}
-        open={!!deleteId}
+        open={isAdmin && !!deleteId}
         onClose={() => setDeleteId(null)}
         onDeleted={async () => {
           const remaining = items.length - 1;

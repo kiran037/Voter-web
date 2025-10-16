@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/role";
 import { Buffer } from "node:buffer";
 import type { Prisma, FamilyRole, ColourCode, FamilyIdType } from "@prisma/client";
 
@@ -12,7 +13,6 @@ export const runtime = "nodejs";
 // Helpers
 // ---------------------------------------------
 type Colour = "OUR" | "OPPOSITE" | "DOUBTFUL" | "OTHER";
-
 function toBool(v: unknown): boolean | null {
   if (v === true || v === "true" || v === "1" || v === 1) return true;
   if (v === false || v === "false" || v === "0" || v === 0) return false;
@@ -92,15 +92,12 @@ function pickInsensitive(row: Record<string, any>, keys: string[], def: any = nu
   return def;
 }
 
-// Map free text -> FamilyRole enum (or null)
 function toFamilyRoleEnum(input: string | null): FamilyRole | null {
   if (!input) return null;
   const v = input.trim().toUpperCase();
   const allowed = new Set<FamilyRole>(["HEAD","SPOUSE","CHILD","PARENT","SIBLING","OTHER"] as FamilyRole[]);
   return allowed.has(v as FamilyRole) ? (v as FamilyRole) : null;
 }
-
-// Map free text -> FamilyIdType enum (or null)
 function toFamilyIdTypeEnum(input: string | null): FamilyIdType | null {
   if (!input) return null;
   const v = input.trim().toUpperCase();
@@ -117,7 +114,6 @@ function toFamilyIdTypeEnum(input: string | null): FamilyIdType | null {
   return map[v] ?? null;
 }
 
-// Map Excel/CSV row -> Voter fields per your new schema
 function mapRow(row: Record<string, any>) {
   const name = String(pickInsensitive(row, ["name","full name","voter_name"], "")).trim();
 
@@ -149,7 +145,6 @@ function mapRow(row: Record<string, any>) {
   const dobRaw = String(pickInsensitive(row, ["dob","date_of_birth"], "")).trim();
   const dob = dobRaw ? new Date(dobRaw) : null;
 
-  // Family fields from the sheet
   const familyExternalId =
     String(
       pickInsensitive(
@@ -163,7 +158,6 @@ function mapRow(row: Record<string, any>) {
     String(pickInsensitive(row, ["familyIdType","family_id_type","id_type"], "")).trim() || null;
   const familyIdType = toFamilyIdTypeEnum(familyIdTypeRaw);
 
-  // Optional: relation/head (if present)
   const relationRaw = String(pickInsensitive(row, ["relationToHead","role"], "")).trim() || null;
   const relationToHead = toFamilyRoleEnum(relationRaw);
 
@@ -176,13 +170,11 @@ function mapRow(row: Record<string, any>) {
       colourCode, voted, starVoter, dead,
       boothNo, partNo, srn, houseNo, address, boothName,
       caste, profession, demands, extraInfo, dob,
-      // IMPORTANT: In your schema, Voter stores the *familyId string* directly:
       familyId: familyExternalId,
       familyIdType: familyIdType ?? null,
-      relationToHead, // enum or null
+      relationToHead,
       headId,
     },
-    // for ImportRow audit trail
     familyExternalId,
     familyIdType,
   };
@@ -194,6 +186,7 @@ function mapRow(row: Record<string, any>) {
 export async function POST(req: NextRequest) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!isAdmin(user)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const form = await req.formData().catch(() => null);
   const file = form?.get("file");
@@ -233,10 +226,9 @@ export async function POST(req: NextRequest) {
     const mapped = mapRow(raw);
     const { voter, familyExternalId, familyIdType } = mapped;
 
-    // ImportRow base (MUST match schema fields)
     const importRowBase: Prisma.ImportRowUncheckedCreateInput = {
       batchId: batch.id as unknown as bigint,
-      status: "SKIPPED", // default; will override below
+      status: "SKIPPED",
       raw: JSON.stringify(raw),
       voterIdStr: voter.voterId ?? null,
       phone1: voter.mobile1 ?? null,
@@ -253,11 +245,9 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      // Build typed payloads so TS matches Prisma expectations
       const baseData = {
         name: voter.name,
         voterId: voter.voterId ?? null,
-        // age/gender omitted unless you map them from sheet
         village: voter.village,
         houseNo: voter.houseNo,
         address: voter.address,
@@ -268,7 +258,7 @@ export async function POST(req: NextRequest) {
         mobile1: voter.mobile1,
         mobile2: voter.mobile2,
         email: voter.email,
-        colourCode: voter.colourCode, // Prisma enum ColourCode
+        colourCode: voter.colourCode,
         voted: voter.voted,
         starVoter: voter.starVoter,
         dead: voter.dead,
@@ -277,13 +267,12 @@ export async function POST(req: NextRequest) {
         demands: voter.demands,
         extraInfo: voter.extraInfo,
         dob: voter.dob,
-        familyId: voter.familyId ?? null,          // string per schema
-        familyIdType: voter.familyIdType ?? null,  // enum or null
-        relationToHead: voter.relationToHead ?? null, // FamilyRole | null
+        familyId: voter.familyId ?? null,
+        familyIdType: voter.familyIdType ?? null,
+        relationToHead: voter.relationToHead ?? null,
         headId: voter.headId ?? null,
       };
 
-      // Explicit create/update types
       const createData: Prisma.VoterUncheckedCreateInput = { ...baseData };
       const updateData: Prisma.VoterUncheckedUpdateInput = { ...baseData };
 
@@ -306,24 +295,16 @@ export async function POST(req: NextRequest) {
           : null;
 
         if (existing) {
-          await prisma.voter.update({
-            where: { id: existing.id },
-            data: updateData,
-          });
+          await prisma.voter.update({ where: { id: existing.id }, data: updateData });
           createdId = existing.id as any;
         } else {
-          const c = await prisma.voter.create({
-            data: createData,
-            select: { id: true },
-          });
+          const c = await prisma.voter.create({ data: createData, select: { id: true } });
           createdId = c.id as any;
         }
       }
 
       success++;
-      await prisma.importRow.create({
-        data: { ...importRowBase, status: "SUCCESS", voterId: createdId },
-      });
+      await prisma.importRow.create({ data: { ...importRowBase, status: "SUCCESS", voterId: createdId } });
     } catch (e: any) {
       failed++;
       let err = e?.message || "insert failed";

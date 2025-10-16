@@ -2,6 +2,8 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAuthedUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/role";
 
 function toId(s: string) { try { return BigInt(s); } catch { return null; } }
 
@@ -18,7 +20,11 @@ type Batch = {
   uploadedById: bigint | null;
 };
 
-export async function GET(_: NextRequest, { params }: { params: { batchId: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { batchId: string } }) {
+  const user = await getAuthedUser(req);
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!isAdmin(user)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
   const id = toId(params.batchId);
   if (!id) return NextResponse.json({ error: "invalid id" }, { status: 400 });
 

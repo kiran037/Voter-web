@@ -1,13 +1,12 @@
-// // src/app/signin/page.tsx
+// src/app/signin/page.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
-import { Phone, User, Lock, Check, ArrowRight } from "lucide-react";
+import { Phone, Lock, Check, ArrowRight } from "lucide-react";
 
 type Step = "idle" | "sent" | "done";
-type Mode = "login" | "register";
 
 function sanitizeNext(nextParam: string | null) {
   if (!nextParam) return "/";
@@ -23,9 +22,7 @@ export default function SignInPage() {
   const sp = useSearchParams();
   const next = sanitizeNext(sp.get("next"));
 
-  const [mode, setMode] = useState<Mode>("login");
   const [phone, setPhone] = useState("");
-  const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<Step>("idle");
   const [msg, setMsg] = useState<string>("");
@@ -45,39 +42,20 @@ export default function SignInPage() {
     return () => { cancelled = true; };
   }, [router, next]);
 
-  async function checkAndSetMode() {
-    const fullPhone = "+91" + phone.trim();
-    if (!phone.trim()) return;
-    try {
-      const r = await fetch(`/api/auth/check?phone=${encodeURIComponent(fullPhone)}`, { cache: "no-store" });
-      const j = await r.json().catch(() => ({}));
-      if (r.ok) {
-        setMode(j.exists ? "login" : "register");
-        setMsg(j.exists ? "✓ Account found. Please continue." : "No account found. Please register.");
-      }
-    } catch {}
-  }
-
   async function sendOtp() {
     const p = "+91" + phone.trim();
     if (!phone.trim()) { setMsg("Please enter phone number"); return; }
-    if (mode === "register" && !name.trim()) { setMsg("Please enter your name"); return; }
 
     setMsg(""); setLoading(true);
     try {
-      const url = mode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const body = mode === "login" ? { phone: p } : { phone: p, name: name.trim() };
-
-      const res = await fetch(url, {
+      const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ phone: p }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         setMsg(j.error || "Failed to send OTP");
-        if (mode === "login" && res.status === 404) setMode("register");
-        if (mode === "register" && res.status === 409) setMode("login");
         return;
       }
       setStep("sent");
@@ -92,17 +70,13 @@ export default function SignInPage() {
     const p = "+91" + phone.trim();
     const c = code.trim();
     if (!c) { setMsg("Enter the OTP"); return; }
-    if (mode === "register" && !name.trim()) { setMsg("Please enter your name"); return; }
 
     setMsg(""); setLoading(true);
     try {
-      const url = mode === "login" ? "/api/auth/login/verify" : "/api/auth/register/verify";
-      const body = mode === "login" ? { phone: p, code: c } : { phone: p, code: c, name: name.trim() };
-
-      const res = await fetch(url, {
+      const res = await fetch("/api/auth/login/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ phone: p, code: c }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -111,7 +85,6 @@ export default function SignInPage() {
       }
       setStep("done");
       setMsg("✓ Signed in successfully. Redirecting…");
-      // Ensure header sees the cookie immediately
       router.replace(next);
       router.refresh();
     } finally {
@@ -139,42 +112,21 @@ export default function SignInPage() {
         <div className="w-full max-w-md">
           {/* Logo & Header */}
           <div className="text-center mb-8 slide-up">
-            <div className="inline-flex items-center justify-center w-16 h-16 mb-4 ">
+            <div className="inline-flex items-center justify-center w-16 h-16 mb-4">
               <Image
-                src="/logo.png"  // <-- use png present in /public
+                src="/logo.png"
                 alt="Udaipur Voters"
                 width={40}
                 height={40}
                 className="object-contain"
               />
             </div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              {mode === "login" ? "Sign In" : "Create Account"}
-            </h1>
-            <p className="text-gray-600">
-              {mode === "login" ? "Welcome back, you've been missed!" : "Join us and make your voice heard"}
-            </p>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Sign In</h1>
+            <p className="text-gray-600">Login with your phone number to continue</p>
           </div>
 
           {/* Main Card */}
           <div className="bg-white rounded-3xl shadow-xl border border-gray-200 p-8 slide-up">
-            {/* Mode Toggle */}
-            <div className="flex gap-2 p-1 bg-gray-100 rounded-xl mb-6">
-              <button
-                onClick={() => { setMode("login"); setStep("idle"); setMsg(""); setCode(""); }}
-                className={`flex-1 py-2.5 rounded-lg font-medium transition-all duration-300 ${mode === "login" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:text-gray-900"}`}
-              >
-                Sign In
-              </button>
-              <button
-                onClick={() => { setMode("register"); setStep("idle"); setMsg(""); setCode(""); }}
-                className={`flex-1 py-2.5 rounded-lg font-medium transition-all duration-300 ${mode === "register" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:text-gray-900"}`}
-              >
-                Sign Up
-              </button>
-            </div>
-
-            {/* Form */}
             <div className="space-y-4">
               {/* Phone Input */}
               <div className="space-y-2">
@@ -186,7 +138,6 @@ export default function SignInPage() {
                   <input
                     value={phone}
                     onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                    onBlur={checkAndSetMode}
                     className="w-full pl-24 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none transition-colors"
                     placeholder="9999999999"
                     type="tel"
@@ -196,23 +147,6 @@ export default function SignInPage() {
                   />
                 </div>
               </div>
-
-              {/* Name Input (Register only) */}
-              {mode === "register" && (
-                <div className="space-y-2 fade-in">
-                  <label className="block text-sm font-medium text-gray-700">Full Name</label>
-                  <div className="relative">
-                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none transition-colors"
-                      placeholder="Enter your full name"
-                      disabled={loading || step === "done"}
-                    />
-                  </div>
-                </div>
-              )}
 
               {/* OTP Input */}
               {step === "sent" && (
@@ -224,7 +158,7 @@ export default function SignInPage() {
                       ref={otpInputRef}
                       value={code}
                       onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); verify(); } }}
+                      onKeyDown={handleOtpKey}
                       className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-[#EF3340] focus:outline-none tracking-widest text-center text-lg font-semibold transition-colors"
                       placeholder="• • • • • •"
                       inputMode="numeric"
@@ -239,13 +173,7 @@ export default function SignInPage() {
               {step !== "done" && (
                 <button
                   onClick={step === "sent" ? verify : sendOtp}
-                  disabled={
-                    loading ||
-                    !phone.trim() ||
-                    phone.length !== 10 ||
-                    (mode === "register" && !name.trim()) ||
-                    (step === "sent" && code.length < 4)
-                  }
+                  disabled={loading || !phone.trim() || phone.length !== 10 || (step === "sent" && code.length < 4)}
                   className="w-full bg-gradient-to-r from-[#EF3340] to-[#C82333] text-white py-3.5 rounded-xl font-semibold hover:shadow-lg hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all duration-200 flex items-center justify-center gap-2 group"
                 >
                   {loading ? (
@@ -268,10 +196,10 @@ export default function SignInPage() {
               {msg && (
                 <div
                   className={`p-3 rounded-xl text-sm fade-in ${
-                    msg.includes("✓") || msg.includes("found")
+                    msg.includes("✓")
                       ? "bg-green-50 text-green-700 border border-green-200"
-                      : msg.includes("Failed") || msg.includes("Invalid")
-                      ? "bg-red-50 text-red-700 border border-red-200"
+                      : msg.toLowerCase().includes("not found")
+                      ? "bg-amber-50 text-amber-700 border border-amber-200"
                       : "bg-blue-50 text-blue-700 border border-blue-200"
                   }`}
                 >
@@ -294,10 +222,7 @@ export default function SignInPage() {
 
           {/* Footer */}
           <p className="text-center text-xs text-gray-500 mt-6">
-            By continuing, you agree to our{" "}
-            <button className="text-[#EF3340] hover:underline">Terms of Service</button>
-            {" "}and{" "}
-            <button className="text-[#EF3340] hover:underline">Privacy Policy</button>
+            If you don’t have an account, please contact your administrator.
           </p>
         </div>
       </main>

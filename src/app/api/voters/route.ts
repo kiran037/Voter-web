@@ -1,8 +1,9 @@
-// // app/api/voters/route.ts
+// app/api/voters/route.ts
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/role";
 
 // ---------- helpers ----------
 function toBool(v: string | null) {
@@ -26,7 +27,6 @@ function pickColour(v: string | null): Colour | undefined {
     : undefined;
 }
 
-// Shape of a row we select for the list
 type VoterListRow = {
   id: bigint;
   name: string;
@@ -59,13 +59,13 @@ export async function GET(req: NextRequest) {
   const where: Record<string, any> = {};
   if (q) {
     where.OR = [
-      { name:     { contains: q } },
-      { village:  { contains: q } },
-      { voterId:  { contains: q } },
-      { mobile1:  { contains: q } },
-      { mobile2:  { contains: q } },
-      { boothName:{ contains: q } },
-      { familyId: { contains: q } }, // search by Family ID (Jan Aadhaar, ration card, etc.)
+      { name: { contains: q } },
+      { village: { contains: q } },
+      { voterId: { contains: q } },
+      { mobile1: { contains: q } },
+      { mobile2: { contains: q } },
+      { boothName: { contains: q } },
+      { familyId: { contains: q } },
     ];
   }
   if (colour !== undefined) where.colourCode = colour;
@@ -107,6 +107,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!isAdmin(user)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   try {
     const body = await req.json();
@@ -116,7 +117,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
 
-    // family inputs (optional)
     const familyId: string | null =
       typeof body.familyId === "string" && body.familyId.trim() ? body.familyId.trim() : null;
 
@@ -156,7 +156,6 @@ export async function POST(req: NextRequest) {
         starVoter: typeof body.starVoter === "boolean" ? body.starVoter : false,
         dead: typeof body.dead === "boolean" ? body.dead : false,
 
-        // survey (trimmed set)
         caste: body.caste ?? null,
         profession: body.profession ?? null,
         demands: body.demands ?? null,
@@ -164,7 +163,6 @@ export async function POST(req: NextRequest) {
 
         dob: body.dob ? new Date(body.dob) : null,
 
-        // family fields
         familyId,
         relationToHead:
           typeof body.relationToHead === "string" && body.relationToHead.trim()

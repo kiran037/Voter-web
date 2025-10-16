@@ -28,6 +28,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "invalid input" }, { status: 400 });
     }
 
+    // Require existing user (no auto-create)
+    const user = await prisma.user.findUnique({
+      where: { phone: ph },
+      select: { id: true, phone: true, name: true, role: true },
+    });
+    if (!user) {
+      return NextResponse.json(
+        { error: "User not found. Please contact the admin to create an account." },
+        { status: 404 }
+      );
+    }
+
     // Accept dev bypass OR validate latest OTP
     let consumeId: bigint | null = null;
     if (!(DEV_BYPASS && otp === DEV_BYPASS)) {
@@ -47,34 +59,17 @@ export async function POST(req: NextRequest) {
       await prisma.authOtp.update({ where: { id: consumeId }, data: { consumedAt: new Date() } });
     }
 
-    // Ensure user exists
-    const user = await prisma.user.upsert({
-      where: { phone: ph },
-      update: {},
-      create: { phone: ph },
-      select: { id: true, phone: true, name: true, role: true },
-    });
-
-    // JWT payload with embedded exp (avoid 2-arg sign)
-    const ttlHours = Number(process.env.SESSION_TTL_HOURS || "24");
-    const nowSec = Math.floor(Date.now() / 1000);
-    const exp = nowSec + ttlHours * 60 * 60;
-
-    const signed = await signJwt({
+    // JWT with role; signJwt adds exp automatically
+    const { token } = await signJwt({
       sub: user.id.toString(),
       phone: user.phone,
-      role: user.role,
-      iat: nowSec,
-      exp,
+      role: user.role, // "ADMIN" | "STAFF"
     });
 
-    const token: string = typeof signed === "string" ? signed : (signed as any).token;
+    const res = NextResponse.json({ ok: true, user: { ...user, id: user.id.toString() } });
 
-    // Safe user for response
-    const safeUser = { ...user, id: user.id.toString() };
-
-    // Build response and set cookie ON THE RESPONSE ONLY
-    const res = NextResponse.json({ ok: true, user: safeUser });
+    // Cookie lifetime from env
+    const ttlHours = Number(process.env.SESSION_TTL_HOURS || "24");
     res.cookies.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: "lax",
