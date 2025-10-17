@@ -1,3 +1,4 @@
+// src/components/voters/ShareActions.tsx
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -5,6 +6,21 @@ import { createPortal } from "react-dom";
 import { Download, Share2, X, MessageCircle } from "lucide-react";
 import type { Voter, ListRow } from "@/types/voter";
 import { buildShareText } from "@/lib/share";
+
+type VotersListApi = {
+  page: number;
+  limit: number;
+  total: number;
+  items: Array<{
+    id: string | number;
+    name: string;
+    voterId: string | null;
+    village: string | null;
+    mobile1: string | null;
+    colourCode: "OUR" | "OPPOSITE" | "DOUBTFUL" | "OTHER";
+  }>;
+  error?: string;
+};
 
 export default function ShareActions({
   voter,
@@ -20,9 +36,14 @@ export default function ShareActions({
 
   // local fallback family cache (when Family tab wasn't opened)
   const [fetchedFamily, setFetchedFamily] = useState<ListRow[] | null>(null);
-  const effectiveFamily = (family && family.length ? family : fetchedFamily) ?? [];
 
   useEffect(() => setPortalReady(true), []);
+
+  // Memoize the effective family list to avoid react-hooks warning noise
+  const effectiveFamily = useMemo<ListRow[]>(
+    () => (family && family.length ? family : fetchedFamily) ?? [],
+    [family, fetchedFamily]
+  );
 
   // When the sheet opens, if we don't already have family but voter has familyId, fetch it.
   useEffect(() => {
@@ -33,7 +54,6 @@ export default function ShareActions({
     const ctrl = new AbortController();
     (async () => {
       try {
-        // ✅ FIX: build URLSearchParams without nulls
         const usp = new URLSearchParams();
         if (voter.familyId) usp.set("q", voter.familyId);
         usp.set("limit", "200");
@@ -42,11 +62,10 @@ export default function ShareActions({
           cache: "no-store",
           signal: ctrl.signal,
         });
-        const j = await r.json().catch(() => ({}));
+        const j: VotersListApi = await r.json().catch(() => ({ page: 1, limit: 0, total: 0, items: [] }));
         if (!r.ok) throw new Error(j.error || "Failed to fetch family");
 
-        const raw: any[] = Array.isArray(j?.items) ? j.items : [];
-        const list: ListRow[] = raw
+        const list: ListRow[] = j.items
           .filter((m) => String(m.id) !== String(voter.id))
           .map((m) => ({
             id: String(m.id),
@@ -56,22 +75,18 @@ export default function ShareActions({
             mobile1: m.mobile1 ?? null,
             colourCode: m.colourCode ?? "OTHER",
           }));
+
         setFetchedFamily(list);
-      } catch (e) {
-        console.error(e);
-        // silently ignore; share text will still include voter + survey
+      } catch {
+        // Silent fail; share text still works with voter-only details
       }
     })();
 
     return () => ctrl.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, voter.familyId]);
+  }, [open, voter.familyId, voter.id, family, fetchedFamily]);
 
-  // ✅ use central builder to include ALL details (voter + survey + family)
-  const shareText = useMemo(
-    () => buildShareText(voter, effectiveFamily),
-    [voter, effectiveFamily]
-  );
+  // Central builder to include ALL details (voter + survey + family)
+  const shareText = useMemo(() => buildShareText(voter, effectiveFamily), [voter, effectiveFamily]);
 
   async function downloadPdf() {
     try {
@@ -86,8 +101,7 @@ export default function ShareActions({
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-    } catch (e) {
-      console.error(e);
+    } catch {
       alert("Could not download PDF.");
     }
   }
@@ -104,7 +118,7 @@ export default function ShareActions({
 
   return (
     <>
-      {/* Header action buttons (compact, neutral) */}
+      {/* Header action buttons */}
       <div className={`flex items-center gap-2 ${className || ""}`}>
         <button
           onClick={() => setOpen(true)}
@@ -125,7 +139,7 @@ export default function ShareActions({
         </button>
       </div>
 
-      {/* Popup via PORTAL (cannot be clipped by header overflow) */}
+      {/* Popup via PORTAL */}
       {portalReady &&
         createPortal(
           open ? (
@@ -136,7 +150,7 @@ export default function ShareActions({
                 onClick={() => setOpen(false)}
                 className="absolute inset-0 bg-black/40 backdrop-blur-sm"
               />
-              {/* bottom sheet (mobile) / centered dialog (sm+) */}
+              {/* sheet/dialog */}
               <div
                 className="
                   absolute inset-x-0 bottom-0
@@ -185,7 +199,7 @@ export default function ShareActions({
                     </button>
                   </div>
 
-                  {/* share preview (scrollable on small screens) */}
+                  {/* share preview */}
                   <div className="px-4 pb-4">
                     <div className="max-h-[50vh] overflow-auto rounded-xl border bg-slate-50">
                       <textarea

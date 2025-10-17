@@ -1,34 +1,46 @@
 // src/lib/auth.ts
-import type { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import { cookies as serverCookies } from "next/headers";
 import { prisma } from "./prisma";
 import { sha256, randomNumericCode } from "./crypto";
-import { signJwt, verifyJwt } from "./jwt";
+import { verifyJwt } from "./jwt";
 import { sendOtpSms } from "./sms";
 
 type Purpose = "LOGIN" | "VERIFY_PHONE";
 
+// Infer the store type from the actual cookies() return type (works across Next versions)
+type CookieStore = Awaited<ReturnType<typeof serverCookies>>;
+
 const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "session";
 const OTP_DEV_BYPASS = (process.env.OTP_DEV_BYPASS || "").trim();
-// OTP resend throttle (seconds)
 const RESEND_COOLDOWN_SEC = Number(process.env.SMS_RESEND_COOLDOWN_SEC || "30");
 
-// Normalize cookies() so it works in both sync/async environments
-async function getCookieStore() {
-  const result = (serverCookies as unknown as () => any)();
-  return typeof (result as any)?.then === "function" ? await result : result;
+// Normalize cookies() so it works if it’s sync or async, with correct typing.
+async function getCookieStore(): Promise<CookieStore> {
+  const maybe = (serverCookies as unknown as () => CookieStore | Promise<CookieStore>)();
+  // If it's a Promise, await; if not, return directly.
+  return (typeof (maybe as any)?.then === "function") ? await (maybe as Promise<CookieStore>) : (maybe as CookieStore);
 }
 
-function addMinutes(d: Date, m: number) {
+function addMinutes(d: Date, m: number): Date {
   const x = new Date(d);
   x.setMinutes(x.getMinutes() + m);
   return x;
 }
 
-export async function issueOtp(phone: string, purpose: Purpose = "LOGIN") {
+class ThrottledError extends Error {
+  readonly status = 429 as const;
+  constructor(secondsRemaining: number) {
+    super(`Please wait ${secondsRemaining}s before requesting another OTP.`);
+  }
+}
+
+export async function issueOtp(
+  phone: string,
+  purpose: Purpose = "LOGIN"
+): Promise<{ expiresAt: Date; devCode?: string }> {
   const now = new Date();
 
-  // Throttle re-sends for same phone/purpose
   const recent = await prisma.authOtp.findFirst({
     where: { phone, purpose },
     orderBy: { id: "desc" },
@@ -39,9 +51,7 @@ export async function issueOtp(phone: string, purpose: Purpose = "LOGIN") {
     const ageSec = Math.floor((now.getTime() - recent.createdAt.getTime()) / 1000);
     if (ageSec < RESEND_COOLDOWN_SEC) {
       const wait = RESEND_COOLDOWN_SEC - ageSec;
-      const err = new Error(`Please wait ${wait}s before requesting another OTP.`);
-      (err as any).status = 429;
-      throw err;
+      throw new ThrottledError(wait);
     }
   }
 
@@ -51,14 +61,13 @@ export async function issueOtp(phone: string, purpose: Purpose = "LOGIN") {
 
   await prisma.authOtp.create({ data: { phone, purpose, codeHash, expiresAt } });
 
-  // Try to send SMS (non-fatal on failure)
   try {
     await sendOtpSms(phone, code);
-  } catch (e: any) {
-    console.error("[OTP] SMS send failed:", e?.message || e);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[OTP] SMS send failed:", msg);
   }
 
-  // Dev visibility
   if (process.env.NODE_ENV !== "production") {
     console.log(`[OTP:DEV] ${phone} -> ${code} (expires 15m)`);
   }
@@ -66,7 +75,11 @@ export async function issueOtp(phone: string, purpose: Purpose = "LOGIN") {
   return { expiresAt, devCode: process.env.NODE_ENV !== "production" ? code : undefined };
 }
 
-export async function verifyOtp(phone: string, code: string, purpose: Purpose = "LOGIN") {
+export async function verifyOtp(
+  phone: string,
+  code: string,
+  purpose: Purpose = "LOGIN"
+): Promise<boolean> {
   if (OTP_DEV_BYPASS && code === OTP_DEV_BYPASS) return true;
 
   const now = new Date();
@@ -86,44 +99,21 @@ export async function verifyOtp(phone: string, code: string, purpose: Purpose = 
 
 export async function createOrGetUser(phone: string) {
   let user = await prisma.user.findUnique({ where: { phone } });
-  // default to STAFF if role not set/created
   if (!user) user = await prisma.user.create({ data: { phone, role: "STAFF" } });
   return user;
 }
 
-/**
- * Set the JWT cookie on a NextResponse.
- * Accepts either a relative max-age in seconds OR an absolute Date expiry.
- * This fixes the previous "Date is not assignable to number" issue.
- */
-export function setJwtCookie(res: NextResponse, token: string, exp: number | Date) {
-  let maxAgeSeconds: number | undefined;
-  let expires: Date | undefined;
-
-  if (typeof exp === "number") {
-    maxAgeSeconds = exp;
-  } else if (exp instanceof Date) {
-    // Convert absolute Date -> max-age (seconds). Also set `expires` for clarity.
-    const deltaSec = Math.max(0, Math.floor((exp.getTime() - Date.now()) / 1000));
-    maxAgeSeconds = deltaSec;
-    expires = exp;
-  }
-
-  res.cookies.set(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    ...(typeof maxAgeSeconds === "number" ? { maxAge: maxAgeSeconds } : {}),
-    ...(expires ? { expires } : {}),
-  });
-}
+/** Minimal, typed JWT payload we care about. */
+type MinimalJwtPayload = {
+  sub?: string | number;
+  uid?: string | number;
+} & Record<string, unknown>;
 
 export async function getAuthedUser(req?: NextRequest) {
-  // Prefer request cookies (when available in a route handler)
+  // Prefer request cookies (route handlers)
   let token = req?.cookies?.get(COOKIE_NAME)?.value;
 
-  // Fallback to server cookie store — handles both sync/async cookies()
+  // Fallback to server cookie store (sync/async safe)
   if (!token) {
     const store = await getCookieStore();
     token = store.get(COOKIE_NAME)?.value;
@@ -132,8 +122,8 @@ export async function getAuthedUser(req?: NextRequest) {
   if (!token) return null;
 
   try {
-    const payload = await verifyJwt(token);
-    const idStr = String((payload as any)?.sub ?? (payload as any)?.uid ?? "");
+    const payload = (await verifyJwt(token)) as MinimalJwtPayload;
+    const idStr = String(payload.sub ?? payload.uid ?? "");
     let id: bigint | null = null;
     try {
       id = BigInt(idStr);
@@ -157,4 +147,31 @@ export async function getAuthedUser(req?: NextRequest) {
   } catch {
     return null;
   }
+}
+
+/** Set the JWT cookie on the outgoing response. Accepts max-age (sec) or Date. */
+export function setJwtCookie(
+  res: import("next/server").NextResponse,
+  token: string,
+  exp: number | Date
+): void {
+  let maxAgeSeconds: number | undefined;
+  let expires: Date | undefined;
+
+  if (typeof exp === "number") {
+    maxAgeSeconds = exp;
+  } else {
+    const deltaSec = Math.max(0, Math.floor((exp.getTime() - Date.now()) / 1000));
+    maxAgeSeconds = deltaSec;
+    expires = exp;
+  }
+
+  res.cookies.set(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    ...(typeof maxAgeSeconds === "number" ? { maxAge: maxAgeSeconds } : {}),
+    ...(expires ? { expires } : {}),
+  });
 }

@@ -10,20 +10,24 @@ import type { Prisma, FamilyRole, ColourCode, FamilyIdType } from "@prisma/clien
 export const runtime = "nodejs";
 
 // ---------------------------------------------
-// Helpers
+// Types & helpers (lint-safe, no "any")
 // ---------------------------------------------
 type Colour = "OUR" | "OPPOSITE" | "DOUBTFUL" | "OTHER";
+type UnknownRecord = Record<string, unknown>;
+type StringRecord = Record<string, string>;
+
 function toBool(v: unknown): boolean | null {
   if (v === true || v === "true" || v === "1" || v === 1) return true;
   if (v === false || v === "false" || v === "0" || v === 0) return false;
   return null;
 }
 function toColour(v: unknown): Colour | null {
-  if (!v) return null;
+  if (v == null) return null;
   const s = String(v).trim().toUpperCase();
-  return (["OUR","OPPOSITE","DOUBTFUL","OTHER"] as const).includes(s as Colour) ? (s as Colour) : null;
+  return (["OUR", "OPPOSITE", "DOUBTFUL", "OTHER"] as const).includes(s as Colour) ? (s as Colour) : null;
 }
 
+/** Excel CSV splitter with quotes support */
 function escCsvSplit(line: string): string[] {
   const out: string[] = [];
   let cur = "", inQ = false;
@@ -42,61 +46,99 @@ function escCsvSplit(line: string): string[] {
   out.push(cur);
   return out;
 }
-function parseCsv(buf: Buffer): Record<string, string>[] {
+
+/** Basic CSV → array of objects (header-based) */
+function parseCsv(buf: Buffer): StringRecord[] {
   const text = buf.toString("utf8").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = text.split("\n").filter(l => l.trim().length > 0);
   if (lines.length === 0) return [];
   const header = escCsvSplit(lines[0]).map(h => h.trim());
-  const rows: Record<string, string>[] = [];
+  const rows: StringRecord[] = [];
   for (let i = 1; i < lines.length; i++) {
     const cols = escCsvSplit(lines[i]);
-    const rec: Record<string, string> = {};
+    const rec: StringRecord = {};
     header.forEach((h, idx) => { rec[h] = cols[idx] ?? ""; });
     rows.push(rec);
   }
   return rows;
 }
 
-// XLSX loader
-async function loadSheetJS(): Promise<any | null> {
+type SheetJSLike = {
+  read: (buf: Buffer, opts: { type: "buffer" }) => {
+    SheetNames: string[];
+    Sheets: Record<string, unknown>;
+  };
+  utils: {
+    sheet_to_json: (sheet: unknown, opts: { raw: boolean }) => Record<string, unknown>[];
+  };
+};
+
+// Runtime type guard so TS won’t complain about “always true”
+function isSheetJSLike(mod: unknown): mod is SheetJSLike {
+  if (!mod || typeof mod !== "object") return false;
+  const m = mod as Record<string, unknown>;
+  const candidate = (("default" in m ? (m as { default: unknown }).default : mod) ?? mod) as Record<string, unknown>;
+  const read = (candidate as Record<string, unknown>).read;
+  const utils = (candidate as Record<string, unknown>).utils as Record<string, unknown> | undefined;
+  return typeof read === "function" && !!utils && typeof utils.sheet_to_json === "function";
+}
+
+function getDefaultIfPresent<T extends object>(mod: T | { default: T }): T {
+  const anyMod = mod as unknown as { default?: T };
+  return anyMod && anyMod.default ? anyMod.default : (mod as T);
+}
+
+async function loadSheetJS(): Promise<SheetJSLike | null> {
+  // Try ESM path first
   try {
-    // @ts-ignore
     const m1 = await import("xlsx/xlsx.mjs");
-    return (m1 as any).read ? m1 : (m1 as any).default || m1;
-  } catch {}
+    const c1 = getDefaultIfPresent(m1 as unknown as object);
+    if (isSheetJSLike(c1)) return c1 as SheetJSLike;
+  } catch {
+    /* ignore */
+  }
+
+  // Fallback to main entry (CJS/ESM auto)
   try {
     const m2 = await import("xlsx");
-    return (m2 as any).read ? m2 : (m2 as any).default || m2;
-  } catch {}
+    const c2 = getDefaultIfPresent(m2 as unknown as object);
+    if (isSheetJSLike(c2)) return c2 as SheetJSLike;
+  } catch {
+    /* ignore */
+  }
+
   return null;
 }
-async function parseXlsx(buf: Buffer): Promise<Record<string, any>[]> {
+
+
+async function parseXlsx(buf: Buffer): Promise<UnknownRecord[]> {
   const XLSX = await loadSheetJS();
-  if (!XLSX || typeof XLSX.read !== "function") {
+  if (!XLSX) {
     const err = new Error("XLSX parser not available. Install `xlsx` and run on Node runtime.");
-    (err as any).status = 400;
+    (err as { status?: number }).status = 400;
     throw err;
   }
   const wb = XLSX.read(buf, { type: "buffer" });
   const sheetName = wb.SheetNames?.[0];
   if (!sheetName) return [];
   const sheet = wb.Sheets[sheetName];
-  return XLSX.utils.sheet_to_json(sheet, { raw: false }) as Record<string, any>[];
+  return XLSX.utils.sheet_to_json(sheet, { raw: false });
 }
 
-function pickInsensitive(row: Record<string, any>, keys: string[], def: any = null) {
+/** case-insensitive pick */
+function pickInsensitive<T = unknown>(row: Record<string, unknown>, keys: string[], def: T): T {
   for (const k of keys) {
     const found = Object.keys(row).find(rk => rk.toLowerCase() === k.toLowerCase());
-    if (found) return row[found];
+    if (found) return row[found] as T;
   }
   return def;
 }
 
 function toFamilyRoleEnum(input: string | null): FamilyRole | null {
   if (!input) return null;
-  const v = input.trim().toUpperCase();
-  const allowed = new Set<FamilyRole>(["HEAD","SPOUSE","CHILD","PARENT","SIBLING","OTHER"] as FamilyRole[]);
-  return allowed.has(v as FamilyRole) ? (v as FamilyRole) : null;
+  const v = input.trim().toUpperCase() as FamilyRole;
+  const allowed = new Set<FamilyRole>(["HEAD", "SPOUSE", "CHILD", "PARENT", "SIBLING", "OTHER"]);
+  return allowed.has(v) ? v : null;
 }
 function toFamilyIdTypeEnum(input: string | null): FamilyIdType | null {
   if (!input) return null;
@@ -114,55 +156,86 @@ function toFamilyIdTypeEnum(input: string | null): FamilyIdType | null {
   return map[v] ?? null;
 }
 
-function mapRow(row: Record<string, any>) {
-  const name = String(pickInsensitive(row, ["name","full name","voter_name"], "")).trim();
+/** Excel serial date (days since 1899-12-30) → JS Date; otherwise try Date(...) */
+function parsePossibleDate(value: unknown): Date | null {
+  if (value == null) return null;
+  // Numbers from Excel often arrive as strings when raw:false; handle both.
+  const num = typeof value === "number" ? value : Number(String(value).trim());
+  if (Number.isFinite(num) && num > 59 && num < 60000) {
+    // Excel's day 1 = 1899-12-31 in some impls; we’ll use 1899-12-30 baseline for safety
+    const base = new Date(Date.UTC(1899, 11, 30));
+    const ms = Math.round(num * 86400000);
+    const d = new Date(base.getTime() + ms);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // Fallback string parse
+  const s = String(value).trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
 
-  const village  = String(pickInsensitive(row, ["village","area"], "")).trim() || null;
-  const voterId  = String(pickInsensitive(row, ["voterId","voter_id","epic"], "")).trim() || null;
-  const mobile1  = String(pickInsensitive(row, ["mobile1","phone","mobile"], "")).trim() || null;
-  const mobile2  = String(pickInsensitive(row, ["mobile2","alt_phone"], "")).trim() || null;
-  const email    = String(pickInsensitive(row, ["email"], "")).trim() || null;
+/** number-ish to number | null */
+function toNumberOrNull(x: unknown): number | null {
+  if (x == null || x === "") return null;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
 
-  const colourCode = (toColour(pickInsensitive(row, ["colourCode","color","segment"], "")) ?? "OTHER") as ColourCode;
+/** Safe BigInt from string */
+function toBigIntOrNull(x: unknown): bigint | null {
+  const s = String(x ?? "").trim();
+  if (!s) return null;
+  try { return BigInt(s); } catch { return null; }
+}
+
+function mapRow(row: UnknownRecord) {
+  const name = String(pickInsensitive(row, ["name", "full name", "voter_name"], "")).trim();
+
+  const village   = (String(pickInsensitive(row, ["village", "area"], "")).trim() || null);
+  const voterId   = (String(pickInsensitive(row, ["voterId", "voter_id", "epic"], "")).trim() || null);
+  const mobile1   = (String(pickInsensitive(row, ["mobile1", "phone", "mobile"], "")).trim() || null);
+  const mobile2   = (String(pickInsensitive(row, ["mobile2", "alt_phone"], "")).trim() || null);
+  const email     = (String(pickInsensitive(row, ["email"], "")).trim() || null);
+
+  const colourCode = (toColour(pickInsensitive(row, ["colourCode", "color", "segment"], "")) ?? "OTHER") as ColourCode;
   const voted      = toBool(pickInsensitive(row, ["voted"], "")) ?? false;
-  const starVoter  = toBool(pickInsensitive(row, ["starVoter","star"], "")) ?? false;
-  const dead       = toBool(pickInsensitive(row, ["dead","is_dead"], "")) ?? false;
+  const starVoter  = toBool(pickInsensitive(row, ["starVoter", "star"], "")) ?? false;
+  const dead       = toBool(pickInsensitive(row, ["dead", "is_dead"], "")) ?? false;
 
-  const n = (x: any) => (x === "" || x == null ? null : Number(x));
-  const boothNo  = n(pickInsensitive(row, ["boothNo","booth_no"]));
-  const partNo   = n(pickInsensitive(row, ["partNo","part_no"]));
-  const srn      = n(pickInsensitive(row, ["srn","serial"]));
+  const boothNo  = toNumberOrNull(pickInsensitive(row, ["boothNo", "booth_no"], ""));
+  const partNo   = toNumberOrNull(pickInsensitive(row, ["partNo", "part_no"], ""));
+  const srn      = toNumberOrNull(pickInsensitive(row, ["srn", "serial"], ""));
 
-  const houseNo  = String(pickInsensitive(row, ["houseNo","house_no"], "")).trim() || null;
-  const address  = String(pickInsensitive(row, ["address"], "")).trim() || null;
-  const boothName= String(pickInsensitive(row, ["boothName","booth_name"], "")).trim() || null;
+  const houseNo  = (String(pickInsensitive(row, ["houseNo", "house_no"], "")).trim() || null);
+  const address  = (String(pickInsensitive(row, ["address"], "")).trim() || null);
+  const boothName= (String(pickInsensitive(row, ["boothName", "booth_name"], "")).trim() || null);
 
-  const caste     = String(pickInsensitive(row, ["caste"], "")).trim() || null;
-  const profession= String(pickInsensitive(row, ["profession"], "")).trim() || null;
-  const demands   = String(pickInsensitive(row, ["demands"], "")).trim() || null;
-  const extraInfo = String(pickInsensitive(row, ["extraInfo","notes","remark"], "")).trim() || null;
+  const caste      = (String(pickInsensitive(row, ["caste"], "")).trim() || null);
+  const profession = (String(pickInsensitive(row, ["profession"], "")).trim() || null);
+  const demands    = (String(pickInsensitive(row, ["demands"], "")).trim() || null);
+  const extraInfo  = (String(pickInsensitive(row, ["extraInfo", "notes", "remark"], "")).trim() || null);
 
-  const dobRaw = String(pickInsensitive(row, ["dob","date_of_birth"], "")).trim();
-  const dob = dobRaw ? new Date(dobRaw) : null;
+  const dobVal = pickInsensitive(row, ["dob", "date_of_birth"], "");
+  const dob = parsePossibleDate(dobVal);
 
   const familyExternalId =
-    String(
+    (String(
       pickInsensitive(
         row,
-        ["familyId","family","janAadhaar","jan_aadhaar","rationCard","ration_card","family_code","family_id"],
+        ["familyId", "family", "janAadhaar", "jan_aadhaar", "rationCard", "ration_card", "family_code", "family_id"],
         ""
       )
-    ).trim() || null;
+    ).trim() || null);
 
-  const familyIdTypeRaw =
-    String(pickInsensitive(row, ["familyIdType","family_id_type","id_type"], "")).trim() || null;
+  const familyIdTypeRaw = (String(pickInsensitive(row, ["familyIdType", "family_id_type", "id_type"], "")).trim() || null);
   const familyIdType = toFamilyIdTypeEnum(familyIdTypeRaw);
 
-  const relationRaw = String(pickInsensitive(row, ["relationToHead","role"], "")).trim() || null;
+  const relationRaw = (String(pickInsensitive(row, ["relationToHead", "role"], "")).trim() || null);
   const relationToHead = toFamilyRoleEnum(relationRaw);
 
-  const headIdRaw = String(pickInsensitive(row, ["headId","head_id"], "")).trim();
-  const headId = headIdRaw ? BigInt(headIdRaw) : null;
+  const headIdRaw = (String(pickInsensitive(row, ["headId", "head_id"], "")).trim());
+  const headId = headIdRaw ? toBigIntOrNull(headIdRaw) : null;
 
   return {
     voter: {
@@ -206,17 +279,18 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  let rows: Record<string, any>[] = [];
+  let rows: UnknownRecord[] = [];
   try {
     if (/\.(xlsx|xlsm|xls)$/i.test(filename)) rows = await parseXlsx(buf);
     else rows = parseCsv(buf);
-  } catch (e: any) {
+  } catch (e) {
     await prisma.importBatch.update({
       where: { id: batch.id },
       data: { status: "FAILED", completedAt: new Date() },
     });
-    const status = Number.isFinite(e?.status) ? e.status : 400;
-    return NextResponse.json({ error: e?.message || "parse failed" }, { status });
+    const msg = e instanceof Error ? e.message : "parse failed";
+    const status = e && typeof (e as { status?: number }).status === "number" ? (e as { status?: number }).status! : 400;
+    return NextResponse.json({ error: msg }, { status });
   }
 
   let rowCount = 0, success = 0, failed = 0;
@@ -285,7 +359,7 @@ export async function POST(req: NextRequest) {
           create: createData,
           select: { id: true },
         });
-        createdId = up.id as any;
+        createdId = up.id as unknown as bigint;
       } else {
         const existing = voter.mobile1
           ? await prisma.voter.findFirst({
@@ -296,19 +370,22 @@ export async function POST(req: NextRequest) {
 
         if (existing) {
           await prisma.voter.update({ where: { id: existing.id }, data: updateData });
-          createdId = existing.id as any;
+          createdId = existing.id as unknown as bigint;
         } else {
           const c = await prisma.voter.create({ data: createData, select: { id: true } });
-          createdId = c.id as any;
+          createdId = c.id as unknown as bigint;
         }
       }
 
       success++;
       await prisma.importRow.create({ data: { ...importRowBase, status: "SUCCESS", voterId: createdId } });
-    } catch (e: any) {
+    } catch (e) {
       failed++;
-      let err = e?.message || "insert failed";
-      if (e?.code === "P2002") err = "duplicate (unique constraint)";
+      let err = e instanceof Error ? e.message : "insert failed";
+      // Prisma unique
+      if (typeof (e as { code?: string }).code === "string" && (e as { code: string }).code === "P2002") {
+        err = "duplicate (unique constraint)";
+      }
       await prisma.importRow.create({
         data: { ...importRowBase, status: "FAILED", error: err.slice(0, 1024) },
       });

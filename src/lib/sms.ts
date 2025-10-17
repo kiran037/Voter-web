@@ -1,5 +1,4 @@
 // src/lib/sms.ts
-import type { NextRequest } from "next/server";
 
 type Provider = "twilio" | "log";
 
@@ -7,20 +6,19 @@ const SMS_PROVIDER = (process.env.SMS_PROVIDER || "log").toLowerCase() as Provid
 const SMS_TEMPLATE = process.env.SMS_TEMPLATE || "Your OTP is {{CODE}}.";
 const COUNTRY = process.env.SMS_COUNTRY_CODE || "+91";
 
-function toE164(input: string) {
+function toE164(input: string): string {
   let p = input.trim();
-  // already E.164?
-  if (p.startsWith("+")) return p;
-  // assume national (India default) -> add country code
+  if (p.startsWith("+")) return p; // already E.164
   p = p.replace(/\D/g, "");
   return `${COUNTRY}${p}`;
 }
 
-export async function sendOtpSms(phoneRaw: string, code: string) {
+export async function sendOtpSms(phoneRaw: string, code: string): Promise<{ ok: true; id: string }> {
   const to = toE164(phoneRaw);
   const message = SMS_TEMPLATE.replace("{{CODE}}", code);
 
   if (SMS_PROVIDER === "log") {
+    // Dev/no-op provider: just log
     console.log(`[SMS:DEV] to=${to} body="${message}"`);
     return { ok: true, id: "dev-log" };
   }
@@ -29,6 +27,7 @@ export async function sendOtpSms(phoneRaw: string, code: string) {
     const sid = process.env.TWILIO_ACCOUNT_SID || "";
     const token = process.env.TWILIO_AUTH_TOKEN || "";
     const from = process.env.TWILIO_FROM || "";
+
     if (!sid || !token || !from) {
       console.warn("[SMS] Twilio env vars missing; falling back to log");
       console.log(`[SMS:DEV] to=${to} body="${message}"`);
@@ -47,14 +46,20 @@ export async function sendOtpSms(phoneRaw: string, code: string) {
       body,
     });
 
-    const json = await resp.json().catch(() => ({}));
+    const json: unknown = await resp.json().catch(() => ({}));
     if (!resp.ok) {
+      const msg = typeof json === "object" && json !== null && "message" in json ? String((json as { message: unknown }).message) : "Failed to send OTP SMS";
       console.error("[SMS:Twilio] error", resp.status, json);
-      throw new Error(json?.message || "Failed to send OTP SMS");
+      throw new Error(msg);
     }
-    return { ok: true, id: json.sid || "twilio-ok" };
+
+    const sidOut =
+      typeof json === "object" && json !== null && "sid" in json ? String((json as { sid: unknown }).sid) : "twilio-ok";
+
+    return { ok: true, id: sidOut };
   }
 
+  // Unknown provider fallback
   console.log(`[SMS:unknown provider=${SMS_PROVIDER}] to=${to} body="${message}"`);
   return { ok: true, id: "unknown-provider" };
 }

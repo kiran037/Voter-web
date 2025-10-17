@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { ChevronLeft, ChevronRight, Filter, Plus, Search, Upload } from "lucide-react";
 import type { ColourCode, VoterListItem } from "@/types/voter";
@@ -9,7 +9,6 @@ import VotersTable from "@/components/home/VotersTable";
 import AddVoterModal from "@/components/home/AddVoterModal";
 import ImportModal from "@/components/home/ImportModal";
 import DeleteConfirmModal from "@/components/home/DeleteConfirmModal";
-
 
 const LIMIT = 50;
 
@@ -25,20 +24,26 @@ export default function HomeClient() {
     (async () => {
       try {
         const r = await fetch("/api/auth/me", { cache: "no-store" });
-        if (!r.ok) return; // if unauthorized, header/layout should already redirect/signin
+        if (!r.ok) return;
         const j = await r.json().catch(() => ({}));
         const role = j?.user?.role ?? "STAFF";
         if (!cancelled) setIsAdmin(role === "ADMIN");
       } catch {}
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ---------- query state (synced to URL) ----------
   const [q, setQ] = useState(sp.get("q") ?? "");
   const [colourCode, setColourCode] = useState<"" | ColourCode>((sp.get("colourCode") as ColourCode) || "");
-  const [voted, setVoted] = useState<"" | "1" | "0">(sp.get("voted") === "1" ? "1" : sp.get("voted") === "0" ? "0" : "");
-  const [starVoter, setStarVoter] = useState<"" | "1" | "0">(sp.get("starVoter") === "1" ? "1" : sp.get("starVoter") === "0" ? "0" : "");
+  const [voted, setVoted] = useState<"" | "1" | "0">(
+    sp.get("voted") === "1" ? "1" : sp.get("voted") === "0" ? "0" : ""
+  );
+  const [starVoter, setStarVoter] = useState<"" | "1" | "0">(
+    sp.get("starVoter") === "1" ? "1" : sp.get("starVoter") === "0" ? "0" : ""
+  );
   const [dead, setDead] = useState<"" | "1" | "0">(sp.get("dead") === "1" ? "1" : sp.get("dead") === "0" ? "0" : "");
   const [page, setPage] = useState<number>(Math.max(1, Number(sp.get("page") || "1")));
 
@@ -77,43 +82,46 @@ export default function HomeClient() {
     router.replace(qs ? `${pathname}?${qs}` : pathname);
   }, [debouncedQ, colourCode, voted, starVoter, dead, page, router, pathname]);
 
-  // ---------- fetch list ----------
-  async function loadList(signal?: AbortSignal) {
-    setLoading(true);
-    try {
-      const usp = new URLSearchParams();
-      usp.set("limit", String(LIMIT));
-      usp.set("page", String(page));
-      if (debouncedQ) usp.set("q", debouncedQ);
-      if (colourCode) usp.set("colourCode", colourCode);
-      if (voted) usp.set("voted", voted);
-      if (starVoter) usp.set("starVoter", starVoter);
-      if (dead) usp.set("dead", dead);
+  // ---------- fetch list (memoized to satisfy exhaustive-deps) ----------
+  const loadList = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true);
+      try {
+        const usp = new URLSearchParams();
+        usp.set("limit", String(LIMIT));
+        usp.set("page", String(page));
+        if (debouncedQ) usp.set("q", debouncedQ);
+        if (colourCode) usp.set("colourCode", colourCode);
+        if (voted) usp.set("voted", voted);
+        if (starVoter) usp.set("starVoter", starVoter);
+        if (dead) usp.set("dead", dead);
 
-      const res = await fetch(`/api/voters?${usp.toString()}`, { cache: "no-store", signal });
-      const j = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setItems(Array.isArray(j.items) ? j.items : []);
-        setTotal(Number.isFinite(j.total) ? j.total : 0);
-      } else {
-        setItems([]);
-        setTotal(0);
+        const res = await fetch(`/api/voters?${usp.toString()}`, { cache: "no-store", signal });
+        const j = await res.json().catch(() => ({}));
+        if (res.ok) {
+          setItems(Array.isArray(j.items) ? j.items : []);
+          setTotal(Number.isFinite(j.total) ? j.total : 0);
+        } else {
+          setItems([]);
+          setTotal(0);
+        }
+      } catch {
+       if (!signal?.aborted) {
+         setItems([]);
+         setTotal(0);
+       }
+      } finally {
+        setLoading(false);
       }
-    } catch (err: any) {
-      if (!signal?.aborted) {
-        setItems([]);
-        setTotal(0);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+    [debouncedQ, colourCode, voted, starVoter, dead, page]
+  );
 
   useEffect(() => {
     const ctrl = new AbortController();
     loadList(ctrl.signal);
     return () => ctrl.abort();
-  }, [debouncedQ, colourCode, voted, starVoter, dead, page]);
+  }, [loadList]);
 
   // ---------- modals ----------
   const [addOpen, setAddOpen] = useState(false);
@@ -136,7 +144,6 @@ export default function HomeClient() {
               <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white tracking-tight">Voters Database</h1>
               <p className="text-white/80 mt-0.5 sm:mt-1 text-sm sm:text-base">Manage, search and maintain your voter records</p>
             </div>
-            {/* Admin-only action buttons */}
             {isAdmin && (
               <div className="flex gap-2">
                 <button
@@ -184,7 +191,10 @@ export default function HomeClient() {
               <select
                 className="px-2.5 py-1.5 sm:px-3 sm:py-2 border border-slate-300 rounded-md sm:rounded-lg focus:border-[#EF3340] focus:outline-none text-xs sm:text-sm"
                 value={colourCode}
-                onChange={(e) => { setColourCode(e.target.value as any); setPage(1); }}
+                onChange={(e) => {
+                  setColourCode(e.target.value as ColourCode | "");
+                  setPage(1);
+                }}
               >
                 <option value="">All</option>
                 <option value="OUR">Our</option>
@@ -196,7 +206,10 @@ export default function HomeClient() {
               <select
                 className="px-2.5 py-1.5 sm:px-3 sm:py-2 border border-slate-300 rounded-md sm:rounded-lg focus:border-[#EF3340] focus:outline-none text-xs sm:text-sm"
                 value={voted}
-                onChange={(e) => { setVoted(e.target.value as any); setPage(1); }}
+                onChange={(e) => {
+                  setVoted(e.target.value as "1" | "0" | "");
+                  setPage(1);
+                }}
               >
                 <option value="">Voted: All</option>
                 <option value="1">Voted</option>
@@ -206,7 +219,10 @@ export default function HomeClient() {
               <select
                 className="px-2.5 py-1.5 sm:px-3 sm:py-2 border border-slate-300 rounded-md sm:rounded-lg focus:border-[#EF3340] focus:outline-none text-xs sm:text-sm"
                 value={starVoter}
-                onChange={(e) => { setStarVoter(e.target.value as any); setPage(1); }}
+                onChange={(e) => {
+                  setStarVoter(e.target.value as "1" | "0" | "");
+                  setPage(1);
+                }}
               >
                 <option value="">Star: All</option>
                 <option value="1">Star Voters</option>
@@ -216,7 +232,10 @@ export default function HomeClient() {
               <select
                 className="px-2.5 py-1.5 sm:px-3 sm:py-2 border border-slate-300 rounded-md sm:rounded-lg focus:border-[#EF3340] focus:outline-none text-xs sm:text-sm"
                 value={dead}
-                onChange={(e) => { setDead(e.target.value as any); setPage(1); }}
+                onChange={(e) => {
+                  setDead(e.target.value as "1" | "0" | "");
+                  setPage(1);
+                }}
               >
                 <option value="">Status: All</option>
                 <option value="0">Alive</option>
@@ -243,12 +262,7 @@ export default function HomeClient() {
       </div>
 
       {/* Table */}
-      <VotersTable
-        items={items}
-        loading={loading}
-        onDeleteAsk={(id) => setDeleteId(id)}
-        isAdmin={isAdmin}
-      />
+      <VotersTable items={items} loading={loading} onDeleteAsk={(id) => setDeleteId(id)} isAdmin={isAdmin} />
 
       {/* Pagination */}
       {!loading && items.length > 0 && (
@@ -284,7 +298,7 @@ export default function HomeClient() {
         </div>
       )}
 
-      {/* Modals (they can stay mounted; only admins see the open buttons) */}
+      {/* Modals */}
       <AddVoterModal
         open={isAdmin && addOpen}
         onClose={() => setAddOpen(false)}

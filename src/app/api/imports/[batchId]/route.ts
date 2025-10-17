@@ -5,7 +5,11 @@ import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/role";
 
-function toId(s: string) { try { return BigInt(s); } catch { return null; } }
+function toId(s: string) {
+  try { return BigInt(s); } catch { return null; }
+}
+
+type ParamsPromise = { params: Promise<{ batchId: string }> };
 
 type Batch = {
   id: bigint;
@@ -20,12 +24,13 @@ type Batch = {
   uploadedById: bigint | null;
 };
 
-export async function GET(req: NextRequest, { params }: { params: { batchId: string } }) {
+export async function GET(req: NextRequest, ctx: ParamsPromise) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!isAdmin(user)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
-  const id = toId(params.batchId);
+  const { batchId } = await ctx.params;
+  const id = toId(batchId);
   if (!id) return NextResponse.json({ error: "invalid id" }, { status: 400 });
 
   const b = await prisma.importBatch.findUnique({

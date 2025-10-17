@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -15,9 +15,7 @@ import FamilyEditCard from "@/components/voters/FamilyEditCard";
 import FamilyCard from "@/components/voters/FamilyCard";
 import SurveyCard from "@/components/voters/SurveyCard";
 
-// 🔹 NEW: import the share action bar
-import ShareActions from "@/components/voters/ShareActions";
-
+// (Header likely renders share actions internally)
 type Tab = "details" | "family" | "survey";
 
 // --- helpers ---
@@ -49,31 +47,35 @@ export default function VoterPage() {
   const [voter, setVoter] = useState<Voter | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  async function load(signal?: AbortSignal) {
-    if (!id) return;
-    setLoading(true);
-    setErr(null);
-    try {
-      const r = await fetch(`/api/voters/${id}`, { cache: "no-store", signal });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || "Failed to load");
-      const dob = j.dob ? String(j.dob).slice(0, 10) : null;
-      setVoter({ ...j, dob });
-    } catch (e: any) {
-      if (signal?.aborted) return;
-      setErr(e?.message || "Failed to load");
-      setVoter(null);
-      toast.error("Failed to load voter", { description: e?.message || "Please try again." });
-    } finally {
-      if (!signal?.aborted) setLoading(false);
-    }
-  }
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!id) return;
+      setLoading(true);
+      setErr(null);
+      try {
+        const r = await fetch(`/api/voters/${id}`, { cache: "no-store", signal });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || "Failed to load");
+        const dob = j.dob ? String(j.dob).slice(0, 10) : null;
+        setVoter({ ...j, dob });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to load";
+        if (signal?.aborted) return;
+        setErr(msg);
+        setVoter(null);
+        toast.error("Failed to load voter", { description: msg });
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [id]
+  );
 
   useEffect(() => {
     const ctrl = new AbortController();
     load(ctrl.signal);
     return () => ctrl.abort();
-  }, [id]);
+  }, [load]);
 
   // ----- setField wrapper (auto-calc age on dob change) -----
   function setField<K extends keyof Voter>(k: K, v: Voter[K]) {
@@ -82,7 +84,7 @@ export default function VoterPage() {
       if (k === "dob") {
         const nextDob = (v as unknown as string) || "";
         const nextAge = nextDob ? calcAgeFromDOB(nextDob) : null;
-        return { ...s, dob: (nextDob || null) as any, age: nextAge };
+        return { ...s, dob: (nextDob || null) as Voter["dob"], age: nextAge };
       }
       return { ...s, [k]: v };
     });
@@ -141,8 +143,9 @@ export default function VoterPage() {
       setEditDetails(false);
       await load();
       toast.success("Voter details saved", { description: "All changes have been updated." });
-    } catch (e: any) {
-      toast.error("Save failed", { description: e?.message || "Please try again." });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Please try again.";
+      toast.error("Save failed", { description: msg });
     } finally {
       setSavingDetails(false);
     }
@@ -176,8 +179,9 @@ export default function VoterPage() {
       setEditSurvey(false);
       await load();
       toast.success("Survey updated", { description: "Survey information has been saved." });
-    } catch (e: any) {
-      toast.error("Save failed", { description: e?.message || "Please try again." });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Please try again.";
+      toast.error("Save failed", { description: msg });
     } finally {
       setSavingSurvey(false);
     }
@@ -207,8 +211,9 @@ export default function VoterPage() {
         throw new Error(j.error || "Update failed");
       }
       toast.success("Contact updated", { description: "Phone number(s) saved." });
-    } catch (e: any) {
-      toast.error("Update failed", { description: e?.message || "Please try again." });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Please try again.";
+      toast.error("Update failed", { description: msg });
     }
   }
 
@@ -224,7 +229,7 @@ export default function VoterPage() {
       setFamily([]);
       return;
     }
-    const famId = voter.familyId;
+    const famId = voter.familyId as string; // guarded above
     if (lastQueryRef.current === famId) return;
     lastQueryRef.current = famId;
 
@@ -238,34 +243,39 @@ export default function VoterPage() {
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j.error || "Failed to load family");
 
-        const raw: any[] = Array.isArray(j?.items) ? j.items : [];
+        const raw = Array.isArray(j?.items) ? (j.items as unknown[]) : [];
         const ensured = await Promise.all(
           raw.map(async (row) => {
-            if (row.familyId) return row;
-            const d = await fetch(`/api/voters/${row.id}`, { cache: "no-store", signal: ctrl.signal })
+            const m = row as Record<string, unknown>;
+            if (m.familyId) return m;
+            const d = await fetch(`/api/voters/${m.id}`, { cache: "no-store", signal: ctrl.signal })
               .then((x) => x.json())
               .catch(() => null);
-            return d ? { ...row, familyId: d.familyId } : row;
+            return d ? { ...m, familyId: d.familyId } : m;
           })
         );
 
-        const exact = ensured
-          .filter((m) => m.familyId === famId && String(m.id) !== String(voter.id))
-          .map((m) => ({
-            id: String(m.id),
-            name: String(m.name ?? ""),
-            voterId: m.voterId ?? null,
-            village: m.village ?? null,
-            mobile1: m.mobile1 ?? null,
-            colourCode: (m.colourCode as ColourCode) ?? "OTHER",
-          })) as ListRow[];
+        const exact: ListRow[] = ensured
+          .filter((m) => (m as Record<string, unknown>).familyId === famId && String((m as any).id) !== String(voter.id))
+          .map((m) => {
+            const mm = m as Record<string, any>;
+            return {
+              id: String(mm.id),
+              name: String(mm.name ?? ""),
+              voterId: mm.voterId ?? null,
+              village: mm.village ?? null,
+              mobile1: mm.mobile1 ?? null,
+              colourCode: (mm.colourCode as ColourCode) ?? "OTHER",
+            };
+          });
 
         setFamily(exact);
-      } catch (e: any) {
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to load family";
         if (!ctrl.signal.aborted) {
-          setFamErr(e?.message || "Failed to load family");
+          setFamErr(msg);
           setFamily([]);
-          toast.error("Family load failed", { description: e?.message || "Please try again." });
+          toast.error("Family load failed", { description: msg });
         }
       } finally {
         if (!ctrl.signal.aborted) setFamLoading(false);
@@ -285,7 +295,7 @@ export default function VoterPage() {
       familyId: voter.familyId?.trim() || `FAM-${voter.id}`,
       familyIdType: voter.familyIdType || "OTHER",
       relationToHead: "HEAD" as FamilyRole,
-      headId: null as any,
+      headId: null as unknown as null,
     };
     const r = await fetch(`/api/voters/${id}`, {
       method: "PUT",
@@ -338,7 +348,7 @@ export default function VoterPage() {
     <div className="mx-auto w-full p-4 md:p-6 space-y-6">
       <VoterHeader
         voter={voter}
-        family={family}            // 🔹 NEW
+        family={family}
         tab={tab}
         onEdit={() => (tab === "details" ? setEditDetails(true) : setEditSurvey(true))}
         onSave={() => (tab === "details" ? saveDetails() : saveSurvey())}
@@ -354,8 +364,9 @@ export default function VoterPage() {
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${tab === t ? "bg-white text-[#EF3340] shadow border border-slate-200" : "text-slate-700 hover:text-slate-900 hover:bg-white/60"
-                }`}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                tab === t ? "bg-white text-[#EF3340] shadow border border-slate-200" : "text-slate-700 hover:text-slate-900 hover:bg-white/60"
+              }`}
             >
               {t === "details" ? "Details" : t === "family" ? "Family" : "Survey"}
             </button>
@@ -365,13 +376,7 @@ export default function VoterPage() {
         <div className="p-6">
           {tab === "details" && (
             <div className="space-y-6">
-              <DetailsCard
-                voter={voter}
-                edit={editDetails && isAdmin}
-                setField={setField}
-                isAdmin={isAdmin}
-                onSaveContacts={onSaveContacts}
-              />
+              <DetailsCard voter={voter} edit={editDetails && isAdmin} setField={setField} isAdmin={isAdmin} onSaveContacts={onSaveContacts} />
               <FamilyEditCard voter={voter} edit={editDetails && isAdmin} setField={setField} onMakeHead={makeHead} />
             </div>
           )}

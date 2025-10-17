@@ -1,7 +1,7 @@
 // src/components/users/UsersAdminPage.tsx
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -16,6 +16,14 @@ import UserForm from "@/components/users/UserForm";
 type UserRole = "ADMIN" | "STAFF";
 
 const LIMIT = 50;
+
+type UsersApiResponse = {
+  page: number;
+  limit: number;
+  total: number;
+  items: UserRow[];
+  error?: string;
+};
 
 export default function UsersAdminPage() {
   const { loading: meLoading, isAdmin } = useMe();
@@ -56,8 +64,8 @@ export default function UsersAdminPage() {
     router.replace(qs ? `${pathname}?${qs}` : pathname);
   }, [debouncedQ, page, router, pathname]);
 
-  // load list (admin-only)
-  async function load(signal?: AbortSignal) {
+  // load list (admin-only) — wrapped in useCallback to satisfy deps
+  const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const usp = new URLSearchParams();
@@ -66,12 +74,12 @@ export default function UsersAdminPage() {
       if (debouncedQ) usp.set("q", debouncedQ);
 
       const r = await fetch(`/api/users?${usp.toString()}`, { cache: "no-store", signal });
-      const j = await r.json().catch(() => ({}));
+      const j: UsersApiResponse = await r.json().catch(() => ({ page: 1, limit: LIMIT, total: 0, items: [] }));
       if (!r.ok) {
         if (r.status === 403) {
           toast.error("Forbidden", { description: "Admins only." });
         } else {
-          toast.error("Failed to load users", { description: j?.error || "Please try again." });
+          toast.error("Failed to load users", { description: (j as { error?: string })?.error || "Please try again." });
         }
         setItems([]);
         setTotal(0);
@@ -79,22 +87,23 @@ export default function UsersAdminPage() {
       }
       setItems(Array.isArray(j.items) ? j.items : []);
       setTotal(Number.isFinite(j.total) ? j.total : 0);
-    } catch (e: any) {
+    } catch (e) {
       if (!signal?.aborted) {
         setItems([]);
         setTotal(0);
-        toast.error("Failed to load users", { description: e?.message || "Please try again." });
+        const msg = e instanceof Error ? e.message : "Please try again.";
+        toast.error("Failed to load users", { description: msg });
       }
     } finally {
       setLoading(false);
     }
-  }
+  }, [debouncedQ, page]);
 
   useEffect(() => {
     const ctrl = new AbortController();
-    if (isAdmin) load(ctrl.signal);
+    if (isAdmin) void load(ctrl.signal);
     return () => ctrl.abort();
-  }, [isAdmin, debouncedQ, page]);
+  }, [isAdmin, load]);
 
   // modals
   const [addOpen, setAddOpen] = useState(false);
@@ -112,13 +121,14 @@ export default function UsersAdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...data, name: data.name || null }),
       });
-      const j = await r.json().catch(() => ({}));
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) throw new Error(j?.error || "Create failed");
       toast.success("User created");
       setAddOpen(false);
       await load();
-    } catch (e: any) {
-      toast.error("Create failed", { description: e?.message || "Please try again." });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Please try again.";
+      toast.error("Create failed", { description: msg });
     } finally {
       setSaving(false);
       toast.dismiss(t);
@@ -135,13 +145,14 @@ export default function UsersAdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...data, name: data.name || null }),
       });
-      const j = await r.json().catch(() => ({}));
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) throw new Error(j?.error || "Update failed");
       toast.success("User updated");
       setEditUser(null);
       await load();
-    } catch (e: any) {
-      toast.error("Update failed", { description: e?.message || "Please try again." });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Please try again.";
+      toast.error("Update failed", { description: msg });
     } finally {
       setSaving(false);
       toast.dismiss(t);
@@ -154,14 +165,15 @@ export default function UsersAdminPage() {
     const t = toast.loading("Deleting user...");
     try {
       const r = await fetch(`/api/users/${id}`, { method: "DELETE" });
-      const j = await r.json().catch(() => ({}));
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) throw new Error(j?.error || "Delete failed");
       toast.success("User deleted");
       setDeleteUser(null);
       if (items.length === 1 && page > 1) setPage((p) => Math.max(1, p - 1));
       await load();
-    } catch (e: any) {
-      toast.error("Delete failed", { description: e?.message || "Please try again." });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Please try again.";
+      toast.error("Delete failed", { description: msg });
     } finally {
       setSaving(false);
       toast.dismiss(t);
@@ -208,7 +220,7 @@ export default function UsersAdminPage() {
         page={page}
         total={total}
         limit={LIMIT}
-        onPrev={() => setPage((p) => Math.max(1, p - 1))}  
+        onPrev={() => setPage((p) => Math.max(1, p - 1))}
         onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
       />
 
@@ -233,7 +245,8 @@ export default function UsersAdminPage() {
         <div className="space-y-4">
           <p className="text-slate-700">
             Are you sure you want to delete{" "}
-            <span className="font-semibold">{deleteUser?.name || deleteUser?.phone}</span>? This action cannot be undone.
+            <span className="font-semibold">{deleteUser?.name || deleteUser?.phone}</span>? This action cannot be
+            undone.
           </p>
           <div className="flex gap-3">
             <button

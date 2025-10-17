@@ -1,54 +1,64 @@
-// // app/api/imports/[batchId]/rows/route.ts
+// app/api/imports/[batchId]/rows/route.ts
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/role";
-
-function toId(s: string) { try { return BigInt(s); } catch { return null; } }
+import type { Prisma } from "@prisma/client";
 
 type RowStatus = "SUCCESS" | "FAILED" | "SKIPPED";
-type ImportRow = {
-  id: bigint;
-  batchId: bigint;
-  status: RowStatus;
-  error: string | null;
-  raw: string | null;
-  voterIdStr: string | null;
-  phone1: string | null;
-  voterId: bigint | null;
-  createdAt: Date;
-};
 
-export async function GET(req: NextRequest, { params }: { params: { batchId: string } }) {
-  const user = await getAuthedUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (!isAdmin(user)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+function toBigIntId(s: string): bigint | null {
+  try { return BigInt(s); } catch { return null; }
+}
+function toPosInt(v: string | null, def: number): number {
+  const n = v ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : def;
+}
+function parseStatus(v: string | null): RowStatus | null {
+  if (!v) return null;
+  const s = v.toUpperCase();
+  return s === "SUCCESS" || s === "FAILED" || s === "SKIPPED" ? (s as RowStatus) : null;
+}
 
-  const { searchParams } = new URL(req.url);
-  const statusParam = searchParams.get("status");
-  const page = Math.max(1, Number(searchParams.get("page") || "1"));
-  const limit = Math.min(500, Math.max(1, Number(searchParams.get("limit") || "100")));
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ batchId: string }> } // Next 15: params is a Promise
+) {
+  // auth
+  const me = await getAuthedUser(req);
+  if (!me) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!isAdmin(me)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
-  const batchId = toId(params.batchId);
+  // params (await the promise)
+  const { batchId: batchIdStr } = await ctx.params;
+  const batchId = toBigIntId(batchIdStr);
   if (!batchId) return NextResponse.json({ error: "invalid id" }, { status: 400 });
 
-  const where: Record<string, any> = { batchId };
-  if (statusParam) {
-    const s = statusParam.toUpperCase();
-    if (!["SUCCESS", "FAILED", "SKIPPED"].includes(s)) {
-      return NextResponse.json({ error: "invalid status" }, { status: 400 });
-    }
-    where.status = s as RowStatus;
+  // query
+  const { searchParams } = new URL(req.url);
+  const page = Math.max(1, toPosInt(searchParams.get("page"), 1));
+  const limit = Math.min(500, toPosInt(searchParams.get("limit"), 100));
+  const skip = (page - 1) * limit;
+
+  const status = parseStatus(searchParams.get("status"));
+  if (searchParams.get("status") && !status) {
+    return NextResponse.json({ error: "invalid status" }, { status: 400 });
   }
 
-  const [total, rowsRaw] = await Promise.all([
+  // where clause (typed)
+  const where: Prisma.ImportRowWhereInput = {
+    batchId: batchId,
+    ...(status ? { status } : {}),
+  };
+
+  const [total, rows] = await Promise.all([
     prisma.importRow.count({ where }),
     prisma.importRow.findMany({
       where,
-      take: limit,
-      skip: (page - 1) * limit,
       orderBy: { id: "desc" },
+      skip,
+      take: limit,
       select: {
         id: true,
         batchId: true,
@@ -63,12 +73,10 @@ export async function GET(req: NextRequest, { params }: { params: { batchId: str
     }),
   ]);
 
-  const rows = rowsRaw as ImportRow[];
-
-  const items = rows.map((r: ImportRow) => ({
+  const items = rows.map((r) => ({
     id: r.id.toString(),
     batchId: r.batchId.toString(),
-    status: r.status,
+    status: r.status as RowStatus,
     error: r.error,
     raw: r.raw,
     voterIdStr: r.voterIdStr,
