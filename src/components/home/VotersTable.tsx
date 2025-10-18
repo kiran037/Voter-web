@@ -1,20 +1,14 @@
+// src/components/home/VotersTable.tsx
 "use client";
 
-import Link from "next/link";
-import {
-  CheckCircle,
-  Download,
-  Eye,
-  MessageCircle,
-  Share2,
-  Trash2,
-  User,
-  X,
-  MapPin,
-  IdCard,
-} from "lucide-react";
-import { useState } from "react";
+import {  User, X, MapPin, IdCard, MessageCircle } from "lucide-react";
+import { useMemo, useState } from "react";
 import type { ColourCode, VoterListItem, Voter, ListRow } from "@/types/voter";
+import DeleteConfirmModal from "./DeleteConfirmModal";
+import KebabMenu from "./kebab/KebabMenu";
+import SelectionToolbar from "./table/SelectionToolbar";
+import VoterCardMobile from "./table/VoterCardMobile";
+import VoterRowDesktop from "./table/VoterRowDesktop";
 import { buildShareText } from "@/lib/share";
 
 function getColorBadge(code: ColourCode) {
@@ -25,6 +19,9 @@ function getColorBadge(code: ColourCode) {
     OTHER: "bg-slate-500/10 text-slate-700 border-slate-500/20",
   };
   return styles[code] || styles.OTHER;
+}
+function digitsOnly(s?: string | null) {
+  return (s || "").replace(/\D/g, "");
 }
 
 export default function VotersTable({
@@ -38,7 +35,65 @@ export default function VotersTable({
   onDeleteAsk: (id: string) => void;
   isAdmin?: boolean;
 }) {
-  // ===== Share modal state =====
+  // ===== selection mode (admin-only) =====
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false); // ✅ ADDED
+
+  const allSelected = useMemo(
+    () => items.length > 0 && items.every((it) => selected.has(String(it.id))),
+    [items, selected]
+  );
+  function toggleOne(id: string, checked: boolean) {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+  function toggleAll(checked: boolean) {
+    setSelected(() => {
+      if (!checked) return new Set();
+      return new Set(items.map((it) => String(it.id)));
+    });
+  }
+
+  // ===== voted overrides (admin only) =====
+  const [votedOverride, setVotedOverride] = useState<Record<string, boolean | undefined>>({});
+  const [savingVote, setSavingVote] = useState<Record<string, boolean>>({});
+  function effectiveVoted(it: VoterListItem) {
+    const ov = votedOverride[String(it.id)];
+    return typeof ov === "boolean" ? ov : it.voted;
+  }
+  async function flipVoted(id: string | number, currentValue: boolean) {
+    if (!isAdmin) return;
+    const key = String(id);
+    const nextVal = !currentValue;
+    setSavingVote((s) => ({ ...s, [key]: true }));
+    setVotedOverride((m) => ({ ...m, [key]: nextVal }));
+    try {
+      const res = await fetch(`/api/voters/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voted: nextVal }),
+      });
+      if (!res.ok) {
+        setVotedOverride((m) => ({ ...m, [key]: currentValue }));
+        const j = await res.json().catch(() => ({}));
+        alert(j?.error || "Failed to update voted status");
+      } else {
+        window.dispatchEvent(new CustomEvent("voters:refresh"));
+      }
+    } catch (e: any) {
+      setVotedOverride((m) => ({ ...m, [key]: currentValue }));
+      alert(e?.message || "Failed to update voted status");
+    } finally {
+      setSavingVote((s) => ({ ...s, [key]: false }));
+    }
+  }
+
+  // ===== share modal state =====
   const [shareOpen, setShareOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
@@ -91,13 +146,44 @@ export default function VotersTable({
     }
   }
 
-  function shareWhatsApp() {
+  function downloadPdfFor(voterId: string | number) {
+    (async () => {
+      try {
+        const r = await fetch(`/api/voters/${voterId}/export.pdf`, { cache: "no-store" });
+        if (!r.ok) throw new Error("Download failed");
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `voter-${voterId}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch {
+        alert("Could not download PDF.");
+      }
+    })();
+  }
+  function digitsOnlyLocal(s?: string | null) {
+    return (s || "").replace(/\D/g, "");
+  }
+  function callNumber(raw?: string | null) {
+    const num = digitsOnlyLocal(raw);
+    if (!num) return alert("No phone number");
+    window.location.href = `tel:${num}`;
+  }
+  function whatsappNumber(raw?: string | null) {
+    const num = digitsOnlyLocal(raw);
+    if (!num) return alert("No phone number");
+    window.open(`https://wa.me/${num}`, "_blank");
+  }
+  function shareWhatsAppThread() {
     if (!voterLoaded) return;
     const txt = buildShareText(voterLoaded, familyLoaded);
     const encoded = encodeURIComponent(txt);
     window.open(`https://wa.me/?text=${encoded}`, "_blank");
   }
-
   function shareSMS() {
     if (!voterLoaded) return;
     const txt = buildShareText(voterLoaded, familyLoaded);
@@ -105,24 +191,7 @@ export default function VotersTable({
     window.location.href = `sms:?&body=${encoded}`;
   }
 
-  async function downloadPdfFor(voterId: string | number) {
-    try {
-      const r = await fetch(`/api/voters/${voterId}/export.pdf`, { cache: "no-store" });
-      if (!r.ok) throw new Error("Download failed");
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `voter-${voterId}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch {
-      alert("Could not download PDF.");
-    }
-  }
-
+  // ---------- UI ----------
   return (
     <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
       {loading ? (
@@ -138,94 +207,64 @@ export default function VotersTable({
         </div>
       ) : (
         <>
-          {/* ---------- MOBILE: separate cards; NO negative margins; NO divide bleed ---------- */}
+          {/* ===== Admin: selection controls header ===== */}
+          {isAdmin && (
+            <SelectionToolbar
+              selectionMode={selectionMode}
+              setSelectionMode={setSelectionMode}
+              allSelected={allSelected}
+              selectedCount={selected.size}
+              onToggleAll={toggleAll}
+              onClear={() => setSelected(new Set())}
+              onOpenDeleteModal={() => setBulkOpen(true)} // ✅ keep only supported prop
+            />
+          )}
+
+          {/* ===== MOBILE cards ===== */}
           <ul className="p-3 space-y-3 sm:hidden">
-            {items.map((it) => (
-              <li key={it.id} className="rounded-xl border border-slate-200 p-3 bg-white shadow-sm">
-                <div className="flex items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <div className="text-sm font-semibold text-slate-900 truncate">{it.name}</div>
-                      <span className={`shrink-0 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold border ${getColorBadge(it.colourCode)}`}>
-                        {it.colourCode}
-                      </span>
-                    </div>
-
-                    {it.voterId && <div className="text-[11px] text-slate-500 mt-0.5">ID: {it.voterId}</div>}
-
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-600">
-                      {it.village && <span>{it.village}</span>}
-                      {(it.boothNo || it.partNo) && (
-                        <span className="text-slate-500">
-                          {it.boothNo && `Booth ${it.boothNo}`}
-                          {it.boothNo && it.partNo && " • "}
-                          {it.partNo && `Part ${it.partNo}`}
-                        </span>
-                      )}
-                      {it.mobile1 && <span>📞 {it.mobile1}</span>}
-                    </div>
-
-                    <div className="mt-1 flex items-center gap-1.5">
-                      {it.voted ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          <CheckCircle size={12} /> Voted
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-                          <X size={12} /> Not
-                        </span>
-                      )}
-                      <span className={`inline-flex px-1.5 py-0.5 rounded-md text-[10px] font-semibold border ${it.dead ? "bg-slate-100 text-slate-700 border-slate-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>
-                        {it.dead ? "Deceased" : "Alive"}
-                      </span>
-                    </div>
-
-                    {/* compact bottom toolbar (no negative margins) */}
-                    <div className="mt-3 pt-2 border-t border-slate-200">
-                      <div className="flex items-center justify-between">
-                        <Link
-                          href={`/voters/${it.id}`}
-                          className="inline-flex items-center justify-center rounded-md p-2 hover:bg-slate-100 active:scale-95 transition"
-                          title="View"
-                        >
-                          <Eye size={18} className="text-slate-700" />
-                        </Link>
-                        <button
-                          onClick={() => fetchVoterAndFamily(it.id)}
-                          className="inline-flex items-center justify-center rounded-md p-2 hover:bg-slate-100 active:scale-95 transition"
-                          title="Share"
-                        >
-                          <Share2 size={18} className="text-[#EF3340]" />
-                        </button>
-                        <button
-                          onClick={() => downloadPdfFor(it.id)}
-                          className="inline-flex items-center justify-center rounded-md p-2 hover:bg-slate-100 active:scale-95 transition"
-                          title="Download PDF"
-                        >
-                          <Download size={18} className="text-slate-700" />
-                        </button>
-                        {isAdmin && (
-                          <button
-                            onClick={() => onDeleteAsk(it.id)}
-                            className="inline-flex items-center justify-center rounded-md p-2 hover:bg-rose-50 active:scale-95 transition"
-                            title="Delete"
-                          >
-                            <Trash2 size={18} className="text-rose-600" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </li>
-            ))}
+            {items.map((it) => {
+              const votedNow = effectiveVoted(it);
+              const saving = !!savingVote[String(it.id)];
+              return (
+                <VoterCardMobile
+                  key={it.id}
+                  isAdmin={isAdmin}
+                  selectionMode={selectionMode}
+                  selected={selected.has(String(it.id))}
+                  onSelect={(checked) => toggleOne(String(it.id), checked)}
+                  item={it}
+                  votedNow={votedNow}
+                  saving={saving}
+                  onFlipVoted={() => flipVoted(it.id, votedNow)}
+                  onDeleteAsk={() => onDeleteAsk(String(it.id))}
+                  Kebab={
+                    <KebabMenu
+                      onShare={() => fetchVoterAndFamily(it.id)}
+                      onDownload={() => downloadPdfFor(it.id)}
+                      onCall={() => callNumber(it.mobile1)}
+                      onWhatsApp={() => whatsappNumber(it.mobile1)}
+                    />
+                  }
+                />
+              );
+            })}
           </ul>
 
-          {/* ---------- DESKTOP/TABLET (unchanged) ---------- */}
+          {/* ===== DESKTOP/TABLET table ===== */}
           <div className="overflow-x-auto hidden sm:block">
             <table className="w-full">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
+                  {isAdmin && selectionMode && (
+                    <th className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded border-slate-300"
+                        checked={allSelected}
+                        onChange={(e) => toggleAll(e.target.checked)}
+                      />
+                    </th>
+                  )}
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Voter Info</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Contact</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Location</th>
@@ -236,89 +275,39 @@ export default function VotersTable({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {items.map((it) => (
-                  <tr key={it.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-4">
-                      <div className="font-semibold text-slate-900">{it.name}</div>
-                      {it.voterId && <div className="text-xs text-slate-500 mt-1">ID: {it.voterId}</div>}
-                    </td>
-                    <td className="px-4 py-4">
-                      {it.mobile1 ? <div className="text-sm text-slate-700">{it.mobile1}</div> : <span className="text-sm text-slate-400">No contact</span>}
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="text-sm text-slate-700">{it.village || "-"}</div>
-                      {(it.boothNo || it.partNo) && (
-                        <div className="text-xs text-slate-500 mt-1">
-                          {it.boothNo && `Booth ${it.boothNo}`}
-                          {it.boothNo && it.partNo && " • "}
-                          {it.partNo && `Part ${it.partNo}`}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className={`inline-flex px-2.5 py-1 rounded-lg text-xs font-semibold border ${getColorBadge(it.colourCode)}`}>{it.colourCode}</span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center justify-center">
-                        {it.voted ? (
-                          <div className="w-8 h-8 rounded-lg bg-emerald-100 border border-emerald-200 flex items-center justify-center" title="Voted">
-                            <CheckCircle size={18} className="text-emerald-600" />
-                          </div>
-                        ) : (
-                          <div className="w-8 h-8 rounded-lg bg-rose-100 border border-rose-200 flex items-center justify-center" title="Not Voted">
-                            <X size={18} className="text-rose-600" />
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center justify-center">
-                        {it.dead ? (
-                          <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">Deceased</span>
-                        ) : (
-                          <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Alive</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center justify-end gap-2">
-                        <Link href={`/voters/${it.id}`} className="p-2 rounded-lg hover:bg-slate-100 transition-colors" title="View Details">
-                          <Eye size={16} className="text-slate-600" />
-                        </Link>
-                        <button
-                          onClick={() => fetchVoterAndFamily(it.id)}
-                          className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
-                          title="Share (WhatsApp / SMS)"
-                        >
-                          <Share2 size={16} className="text-[#EF3340]" />
-                        </button>
-                        <button
-                          onClick={() => downloadPdfFor(it.id)}
-                          className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
-                          title="Download PDF"
-                        >
-                          <Download size={16} className="text-slate-700" />
-                        </button>
-                        {isAdmin && (
-                          <button
-                            onClick={() => onDeleteAsk(it.id)}
-                            className="p-2 rounded-lg hover:bg-rose-50 transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 size={16} className="text-rose-600" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {items.map((it) => {
+                  const votedNow = effectiveVoted(it);
+                  const saving = !!savingVote[String(it.id)];
+                  return (
+                    <VoterRowDesktop
+                      key={it.id}
+                      isAdmin={isAdmin}
+                      selectionMode={selectionMode}
+                      selected={selected.has(String(it.id))}
+                      onSelect={(checked) => toggleOne(String(it.id), checked)}
+                      item={it}
+                      votedNow={votedNow}
+                      saving={saving}
+                      onFlipVoted={() => flipVoted(it.id, votedNow)}
+                      onDeleteAsk={() => onDeleteAsk(String(it.id))}
+                      Kebab={
+                        <KebabMenu
+                          onShare={() => fetchVoterAndFamily(it.id)}
+                          onDownload={() => downloadPdfFor(it.id)}
+                          onCall={() => callNumber(it.mobile1)}
+                          onWhatsApp={() => whatsappNumber(it.mobile1)}
+                        />
+                      }
+                    />
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </>
       )}
 
-      {/* ======= SHARE MODAL ======= */}
+      {/* SHARE MODAL */}
       {shareOpen && (
         <div className="fixed inset-0 z-[100]">
           <button
@@ -334,7 +323,7 @@ export default function VotersTable({
 
               <div className="flex items-center justify-between px-4 py-3 border-b">
                 <div className="font-semibold text-slate-800">Share voter</div>
-                <button onClick={() => setShareOpen(false)} className="p-2 rounded-md hover:bg-slate-100" title="Close">
+                <button onClick={() => setShareOpen(false)} className="p-2 rounded-md hover:bg-slate-100" title="Close" type="button">
                   <X size={18} />
                 </button>
               </div>
@@ -367,17 +356,19 @@ export default function VotersTable({
                     <div className="p-3 space-y-2 bg-white">
                       <div className="grid grid-cols-2 gap-2">
                         <button
-                          onClick={shareWhatsApp}
+                          onClick={shareWhatsAppThread}
                           className="flex flex-col items-center justify-center gap-2 px-4 py-4 rounded-xl border hover:bg-slate-50 active:scale-[0.99] transition text-center"
+                          type="button"
                         >
-                          <MessageCircle size={20} className="text-green-600" />
+                          <MessageCircle size={20} />
                           <span className="text-xs font-medium">WhatsApp</span>
                         </button>
                         <button
                           onClick={shareSMS}
                           className="flex flex-col items-center justify-center gap-2 px-4 py-4 rounded-xl border hover:bg-slate-50 active:scale-[0.99] transition text-center"
+                          type="button"
                         >
-                          <MessageCircle size={20} className="text-sky-600" />
+                          <MessageCircle size={20} />
                           <span className="text-xs font-medium">SMS</span>
                         </button>
                       </div>
@@ -400,6 +391,19 @@ export default function VotersTable({
             </div>
           </div>
         </div>
+      )}
+
+      {/* BULK DELETE MODAL (admin only) */}
+      {isAdmin && (
+        <DeleteConfirmModal
+          open={bulkOpen} // ✅ uses state added above
+          onClose={() => setBulkOpen(false)}
+          onDeleted={async () => {
+            setSelected(new Set());
+            setSelectionMode(false);
+          }}
+          ids={Array.from(selected)}
+        />
       )}
     </div>
   );

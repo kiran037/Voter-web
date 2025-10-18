@@ -1,19 +1,8 @@
+// // src/components/voters/DetailsCard.tsx
 "use client";
 
 import { Building2, MapPin, Phone, Award, User } from "lucide-react";
 import type { Voter } from "@/types/voter";
-
-function computeAgeFromDob(dobISO: string | null): number | null {
-  if (!dobISO) return null;
-  const dob = new Date(dobISO + "T00:00:00");
-  if (isNaN(dob.getTime())) return null;
-  const today = new Date();
-  let years = today.getFullYear() - dob.getFullYear();
-  const m = today.getMonth() - dob.getMonth();
-  const d = today.getDate() - dob.getDate();
-  if (m < 0 || (m === 0 && d < 0)) years--;
-  return years >= 0 ? years : null;
-}
 
 export default function DetailsCard({
   voter,
@@ -28,9 +17,6 @@ export default function DetailsCard({
   isAdmin: boolean;
   onSaveContacts: (mobile1?: string, mobile2?: string) => Promise<void> | void; // for non-admin, save on blur
 }) {
-  const computedAge = computeAgeFromDob(voter.dob);
-  const ageDisplay = computedAge ?? voter.age ?? null;
-
   // Admins can edit when `edit` is true. Non-admins: only mobile fields editable.
   const canEdit = isAdmin && edit;
 
@@ -59,20 +45,34 @@ export default function DetailsCard({
                 className={commonInputCls}
               />
             </div>
+
+            {/* Voter ID (always uppercase) */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Voter ID</label>
               <input
                 value={voter.voterId || ""}
                 disabled={!canEdit}
-                onChange={(e) => setField("voterId", e.target.value)}
+                onChange={(e) => {
+                  const upper = e.target.value.toUpperCase();
+                  setField("voterId", upper as any);
+                }}
                 className={commonInputCls}
               />
             </div>
 
-            {/* Age (derived) */}
+            {/* Age (editable) */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Age</label>
-              <input value={ageDisplay ?? ""} disabled className={`${commonInputCls} bg-slate-50 text-slate-700`} readOnly aria-readonly />
+              <input
+                value={voter.age ?? ""}
+                disabled={!canEdit}
+                inputMode="numeric"
+                onChange={(e) => {
+                  const onlyDigits = e.target.value.replace(/\D/g, "");
+                  setField("age", (onlyDigits ? Number(onlyDigits) : null) as any);
+                }}
+                className={commonInputCls}
+              />
             </div>
 
             <div>
@@ -89,21 +89,19 @@ export default function DetailsCard({
                 <option value="O">Other</option>
               </select>
             </div>
+
+            {/* DOB (no auto-age sync) */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Date of Birth</label>
               <input
                 type="date"
                 value={voter.dob || ""}
                 disabled={!canEdit}
-                onChange={(e) => {
-                  const nextDob = e.target.value || null;
-                  setField("dob", nextDob);
-                  const nextAge = computeAgeFromDob(nextDob);
-                  setField("age", (nextAge as any) ?? null);
-                }}
+                onChange={(e) => setField("dob", (e.target.value || null) as any)}
                 className={commonInputCls}
               />
             </div>
+
             <div className="md:col-span-2">
               <label className="block text-sm font-semibold text-slate-700 mb-2">Address</label>
               <input
@@ -144,7 +142,7 @@ export default function DetailsCard({
                       setField(key as any, e.target.value);
                     } else {
                       const onlyDigits = e.target.value.replace(/\D/g, "");
-                      setField(key as any, onlyDigits ? Number(onlyDigits) : null);
+                      setField(key as any, (onlyDigits ? Number(onlyDigits) : null) as any);
                     }
                   }}
                   className={commonInputCls}
@@ -165,12 +163,10 @@ export default function DetailsCard({
         </div>
         <div className="p-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* mobile1 */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Mobile 1</label>
               <input
                 value={voter.mobile1 || ""}
-                // Non-admins: always enabled for mobiles; Admins follow canEdit
                 disabled={isAdmin ? !canEdit : false}
                 onChange={(e) => setField("mobile1", e.target.value)}
                 onBlur={() => {
@@ -179,7 +175,6 @@ export default function DetailsCard({
                 className={commonInputCls}
               />
             </div>
-            {/* mobile2 */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Mobile 2</label>
               <input
@@ -192,7 +187,6 @@ export default function DetailsCard({
                 className={commonInputCls}
               />
             </div>
-            {/* email stays admin-editable only */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Email</label>
               <input
@@ -256,7 +250,7 @@ export default function DetailsCard({
         </div>
       </div>
 
-      {/* Address chunk */}
+      {/* Address */}
       <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
         <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-4 border-b border-slate-200">
           <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">

@@ -1,3 +1,4 @@
+///Users/xeoren/voter-web/src/app/api/users/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";

@@ -1,3 +1,4 @@
+///Users/xeoren/voter-web/src/components/voters/VoterHeader.tsx
 "use client";
 
 import Link from "next/link";

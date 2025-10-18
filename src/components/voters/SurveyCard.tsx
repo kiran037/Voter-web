@@ -1,3 +1,4 @@
+///Users/xeoren/voter-web/src/components/voters/SurveyCard.tsx
 "use client";
 
 import { FileText } from "lucide-react";

@@ -1,3 +1,4 @@
+///Users/xeoren/voter-web/src/types/voter.ts
 export type Gender = "M" | "F" | "O";
 export type ColourCode = "OUR" | "OPPOSITE" | "DOUBTFUL" | "OTHER";
 export type FamilyRole = "HEAD" | "SPOUSE" | "CHILD" | "PARENT" | "SIBLING" | "OTHER";

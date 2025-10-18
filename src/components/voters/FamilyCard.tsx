@@ -1,4 +1,5 @@
-// "use client";
+///Users/xeoren/voter-web/src/components/voters/FamilyCard.tsx
+"use client";
 
 import Link from "next/link";
 import { Crown, ExternalLink, IdCard, MapPin, Phone, Users } from "lucide-react";

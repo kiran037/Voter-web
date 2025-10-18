@@ -38,13 +38,10 @@ export default function HomeClient() {
   // ---------- query state (synced to URL) ----------
   const [q, setQ] = useState(sp.get("q") ?? "");
   const [colourCode, setColourCode] = useState<"" | ColourCode>((sp.get("colourCode") as ColourCode) || "");
-  const [voted, setVoted] = useState<"" | "1" | "0">(
-    sp.get("voted") === "1" ? "1" : sp.get("voted") === "0" ? "0" : ""
-  );
-  const [starVoter, setStarVoter] = useState<"" | "1" | "0">(
-    sp.get("starVoter") === "1" ? "1" : sp.get("starVoter") === "0" ? "0" : ""
-  );
+  const [voted, setVoted] = useState<"" | "1" | "0">(sp.get("voted") === "1" ? "1" : sp.get("voted") === "0" ? "0" : "");
+  const [starVoter, setStarVoter] = useState<"" | "1" | "0">(sp.get("starVoter") === "1" ? "1" : sp.get("starVoter") === "0" ? "0" : "");
   const [dead, setDead] = useState<"" | "1" | "0">(sp.get("dead") === "1" ? "1" : sp.get("dead") === "0" ? "0" : "");
+  const [boothNo, setBoothNo] = useState<string>(sp.get("boothNo") ?? "");
   const [page, setPage] = useState<number>(Math.max(1, Number(sp.get("page") || "1")));
 
   // ---------- data ----------
@@ -77,12 +74,13 @@ export default function HomeClient() {
     if (voted) usp.set("voted", voted);
     if (starVoter) usp.set("starVoter", starVoter);
     if (dead) usp.set("dead", dead);
+    if (boothNo) usp.set("boothNo", boothNo);
     usp.set("page", String(page));
     const qs = usp.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname);
-  }, [debouncedQ, colourCode, voted, starVoter, dead, page, router, pathname]);
+  }, [debouncedQ, colourCode, voted, starVoter, dead, boothNo, page, router, pathname]);
 
-  // ---------- fetch list (memoized to satisfy exhaustive-deps) ----------
+  // ---------- fetch list ----------
   const loadList = useCallback(
     async (signal?: AbortSignal) => {
       setLoading(true);
@@ -95,6 +93,7 @@ export default function HomeClient() {
         if (voted) usp.set("voted", voted);
         if (starVoter) usp.set("starVoter", starVoter);
         if (dead) usp.set("dead", dead);
+        if (boothNo) usp.set("boothNo", boothNo);
 
         const res = await fetch(`/api/voters?${usp.toString()}`, { cache: "no-store", signal });
         const j = await res.json().catch(() => ({}));
@@ -106,15 +105,15 @@ export default function HomeClient() {
           setTotal(0);
         }
       } catch {
-       if (!signal?.aborted) {
-         setItems([]);
-         setTotal(0);
-       }
+        if (!signal?.aborted) {
+          setItems([]);
+          setTotal(0);
+        }
       } finally {
         setLoading(false);
       }
     },
-    [debouncedQ, colourCode, voted, starVoter, dead, page]
+    [debouncedQ, colourCode, voted, starVoter, dead, boothNo, page]
   );
 
   useEffect(() => {
@@ -123,12 +122,23 @@ export default function HomeClient() {
     return () => ctrl.abort();
   }, [loadList]);
 
+  // Refresh when children broadcast
+  useEffect(() => {
+    const onRefresh = () => {
+      const ctrl = new AbortController();
+      loadList(ctrl.signal);
+      // cleanup will happen in the effect above when rerendering
+    };
+    window.addEventListener("voters:refresh", onRefresh);
+    return () => window.removeEventListener("voters:refresh", onRefresh);
+  }, [loadList]);
+
   // ---------- modals ----------
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
-  const activeFilters = [colourCode, voted, starVoter, dead].filter(Boolean).length;
+  const activeFilters = [colourCode, voted, starVoter, dead, boothNo].filter(Boolean).length;
 
   // ---------------- UI ----------------
   return (
@@ -188,6 +198,7 @@ export default function HomeClient() {
                 )}
               </div>
 
+              {/* Colour code */}
               <select
                 className="px-2.5 py-1.5 sm:px-3 sm:py-2 border border-slate-300 rounded-md sm:rounded-lg focus:border-[#EF3340] focus:outline-none text-xs sm:text-sm"
                 value={colourCode}
@@ -203,6 +214,7 @@ export default function HomeClient() {
                 <option value="OTHER">Other</option>
               </select>
 
+              {/* Voted */}
               <select
                 className="px-2.5 py-1.5 sm:px-3 sm:py-2 border border-slate-300 rounded-md sm:rounded-lg focus:border-[#EF3340] focus:outline-none text-xs sm:text-sm"
                 value={voted}
@@ -216,6 +228,7 @@ export default function HomeClient() {
                 <option value="0">Not Voted</option>
               </select>
 
+              {/* Star voter */}
               <select
                 className="px-2.5 py-1.5 sm:px-3 sm:py-2 border border-slate-300 rounded-md sm:rounded-lg focus:border-[#EF3340] focus:outline-none text-xs sm:text-sm"
                 value={starVoter}
@@ -229,6 +242,7 @@ export default function HomeClient() {
                 <option value="0">Regular</option>
               </select>
 
+              {/* Status */}
               <select
                 className="px-2.5 py-1.5 sm:px-3 sm:py-2 border border-slate-300 rounded-md sm:rounded-lg focus:border-[#EF3340] focus:outline-none text-xs sm:text-sm"
                 value={dead}
@@ -242,6 +256,19 @@ export default function HomeClient() {
                 <option value="1">Deceased</option>
               </select>
 
+              {/* Booth No. */}
+              <input
+                className="px-2.5 py-1.5 sm:px-3 sm:py-2 border border-slate-300 rounded-md sm:rounded-lg focus:border-[#EF3340] focus:outline-none text-xs sm:text-sm"
+                placeholder="Booth No."
+                inputMode="numeric"
+                value={boothNo}
+                onChange={(e) => {
+                  const digits = e.target.value.replace(/\D/g, "");
+                  setBoothNo(digits);
+                  setPage(1);
+                }}
+              />
+
               {activeFilters > 0 && (
                 <button
                   onClick={() => {
@@ -249,6 +276,7 @@ export default function HomeClient() {
                     setVoted("");
                     setStarVoter("");
                     setDead("");
+                    setBoothNo("");
                     setPage(1);
                   }}
                   className="ml-auto px-2.5 py-1.5 text-xs sm:text-sm text-[#EF3340] hover:bg-rose-50 rounded-md sm:rounded-lg transition-colors"

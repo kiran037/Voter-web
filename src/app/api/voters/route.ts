@@ -56,6 +56,10 @@ export async function GET(req: NextRequest) {
   const star = toBool(searchParams.get("starVoter"));
   const dead = toBool(searchParams.get("dead"));
 
+  // NEW: boothNo filter (numeric)
+  const boothNoParam = (searchParams.get("boothNo") || "").trim();
+  const boothNo = boothNoParam ? toInt(boothNoParam) : undefined;
+
   const where: Record<string, any> = {};
   if (q) {
     where.OR = [
@@ -72,6 +76,7 @@ export async function GET(req: NextRequest) {
   if (voted !== undefined) where.voted = voted;
   if (star !== undefined) where.starVoter = star;
   if (dead !== undefined) where.dead = dead;
+  if (boothNo !== undefined) where.boothNo = boothNo;
 
   const [total, rows] = await Promise.all([
     prisma.voter.count({ where }),
