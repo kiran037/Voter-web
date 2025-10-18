@@ -1,15 +1,26 @@
 // src/components/home/VotersTable.tsx
 "use client";
 
-import {  User, X, MapPin, IdCard, MessageCircle } from "lucide-react";
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import {
+  CheckCircle,
+  Download,
+  Eye,
+  MoreVertical,
+  Phone as PhoneIcon,
+  MessageCircle,
+  Share2,
+  Trash2,
+  User,
+  X,
+  MapPin,
+  IdCard,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ColourCode, VoterListItem, Voter, ListRow } from "@/types/voter";
-import DeleteConfirmModal from "./DeleteConfirmModal";
-import KebabMenu from "./kebab/KebabMenu";
-import SelectionToolbar from "./table/SelectionToolbar";
-import VoterCardMobile from "./table/VoterCardMobile";
-import VoterRowDesktop from "./table/VoterRowDesktop";
 import { buildShareText } from "@/lib/share";
+import DeleteConfirmModal from "./DeleteConfirmModal";
+import Portal from "@/components/common/Portal";
 
 function getColorBadge(code: ColourCode) {
   const styles: Record<ColourCode, string> = {
@@ -36,14 +47,14 @@ export default function VotersTable({
   isAdmin?: boolean;
 }) {
   // ===== selection mode (admin-only) =====
-  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false); // NEW
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulkOpen, setBulkOpen] = useState(false); // ✅ ADDED
 
   const allSelected = useMemo(
     () => items.length > 0 && items.every((it) => selected.has(String(it.id))),
     [items, selected]
   );
+
   function toggleOne(id: string, checked: boolean) {
     setSelected((s) => {
       const next = new Set(s);
@@ -59,19 +70,22 @@ export default function VotersTable({
     });
   }
 
-  // ===== voted overrides (admin only) =====
+  // ===== optimistic voted overrides + saving flags (admin only) =====
   const [votedOverride, setVotedOverride] = useState<Record<string, boolean | undefined>>({});
   const [savingVote, setSavingVote] = useState<Record<string, boolean>>({});
+
   function effectiveVoted(it: VoterListItem) {
     const ov = votedOverride[String(it.id)];
     return typeof ov === "boolean" ? ov : it.voted;
   }
+
   async function flipVoted(id: string | number, currentValue: boolean) {
-    if (!isAdmin) return;
+    if (!isAdmin) return; // safety: only admins can flip
     const key = String(id);
     const nextVal = !currentValue;
     setSavingVote((s) => ({ ...s, [key]: true }));
-    setVotedOverride((m) => ({ ...m, [key]: nextVal }));
+    setVotedOverride((m) => ({ ...m, [key]: nextVal })); // optimistic
+
     try {
       const res = await fetch(`/api/voters/${id}`, {
         method: "PUT",
@@ -93,12 +107,15 @@ export default function VotersTable({
     }
   }
 
-  // ===== share modal state =====
+  // ===== Share modal state =====
   const [shareOpen, setShareOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [voterLoaded, setVoterLoaded] = useState<Voter | null>(null);
   const [familyLoaded, setFamilyLoaded] = useState<ListRow[]>([]);
+
+  // ===== Bulk delete modal =====
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   async function fetchVoterAndFamily(voterId: string | number) {
     setBusy(true);
@@ -165,19 +182,19 @@ export default function VotersTable({
       }
     })();
   }
-  function digitsOnlyLocal(s?: string | null) {
-    return (s || "").replace(/\D/g, "");
-  }
+
+  // Quick call / WhatsApp (for everybody)
   function callNumber(raw?: string | null) {
-    const num = digitsOnlyLocal(raw);
+    const num = digitsOnly(raw);
     if (!num) return alert("No phone number");
     window.location.href = `tel:${num}`;
   }
   function whatsappNumber(raw?: string | null) {
-    const num = digitsOnlyLocal(raw);
+    const num = digitsOnly(raw);
     if (!num) return alert("No phone number");
     window.open(`https://wa.me/${num}`, "_blank");
   }
+
   function shareWhatsAppThread() {
     if (!voterLoaded) return;
     const txt = buildShareText(voterLoaded, familyLoaded);
@@ -190,6 +207,247 @@ export default function VotersTable({
     const encoded = encodeURIComponent(txt);
     window.location.href = `sms:?&body=${encoded}`;
   }
+
+function Kebab({
+  id,
+  primaryPhone,
+}: {
+  id: string | number;
+  primaryPhone?: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Track viewport size to decide mobile vs desktop behavior
+  useEffect(() => {
+    const update = () => setIsMobile(window.innerWidth < 640);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  // Close on outside click / ESC / scroll
+  useEffect(() => {
+    if (!open) return;
+    
+    function handleClick(e: MouseEvent) {
+      const t = e.target as Node | null;
+      if (!t) return;
+      const insideAnchor = !!anchorRef.current && anchorRef.current.contains(t);
+      const insideMenu = !!menuRef.current && menuRef.current.contains(t);
+      if (!insideAnchor && !insideMenu) setOpen(false);
+    }
+    
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    
+    function handleScroll() {
+      setOpen(false);
+    }
+    
+    document.addEventListener("click", handleClick, true);
+    document.addEventListener("keydown", handleKey, true);
+    window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", handleScroll);
+    
+    return () => {
+      document.removeEventListener("click", handleClick, true);
+      document.removeEventListener("keydown", handleKey, true);
+      window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", handleScroll);
+    };
+  }, [open]);
+
+  function calculatePosition() {
+    if (!anchorRef.current) return null;
+
+    const buttonRect = anchorRef.current.getBoundingClientRect();
+    const desktopMenuWidth = 192;
+    const mobileMenuWidth = 160;
+    const menuHeight = 200;
+    const gap = 8;
+    const padding = 8;
+
+    const vp = {
+      w: window.innerWidth,
+      h: window.innerHeight,
+    };
+
+    let left: number;
+    let top: number;
+
+    if (isMobile) {
+      // On mobile: position to the right of the button (which is on the right side)
+      
+      // Try to position to the right of button first
+      left = buttonRect.right + gap;
+      
+      // If it goes off right edge, position to the left of button instead
+      if (left + mobileMenuWidth + padding > vp.w) {
+        left = buttonRect.left - mobileMenuWidth - gap;
+      }
+      
+      // Ensure it stays in bounds horizontally
+      if (left < padding) {
+        left = padding;
+      }
+      if (left + mobileMenuWidth > vp.w - padding) {
+        left = vp.w - mobileMenuWidth - padding;
+      }
+      
+      // Try to position below button first
+      top = buttonRect.bottom + gap;
+      
+      // If it goes off bottom, position above instead
+      if (top + menuHeight + padding > vp.h) {
+        top = Math.max(padding, buttonRect.top - menuHeight - gap);
+      }
+    } else {
+      // Desktop: position to the right, with fallback to left
+      left = buttonRect.right + gap;
+      top = buttonRect.top;
+
+      // If menu would overflow right, position it to the left
+      if (left + desktopMenuWidth + padding > vp.w) {
+        left = buttonRect.left - desktopMenuWidth - gap;
+      }
+
+      // Ensure left stays within bounds
+      if (left < padding) {
+        left = padding;
+      }
+      if (left + desktopMenuWidth > vp.w - padding) {
+        left = vp.w - desktopMenuWidth - padding;
+      }
+
+      // If menu would overflow bottom, position it above
+      if (top + menuHeight + padding > vp.h) {
+        top = buttonRect.top - menuHeight - gap;
+      }
+
+      // Ensure top stays within bounds
+      if (top < padding) {
+        top = padding;
+      }
+    }
+
+    return { top, left };
+  }
+
+  function toggle(e: React.MouseEvent<HTMLButtonElement>) {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+
+    // Calculate position for both mobile and desktop
+    const newPos = calculatePosition();
+    setPos(newPos);
+    setOpen(true);
+  }
+
+  // Recalculate position when menu opens or on scroll
+  useEffect(() => {
+    if (!open || isMobile) return;
+
+    const handlePositionUpdate = () => {
+      const newPos = calculatePosition();
+      setPos(newPos);
+    };
+
+    window.addEventListener("scroll", handlePositionUpdate, true);
+    window.addEventListener("resize", handlePositionUpdate);
+
+    return () => {
+      window.removeEventListener("scroll", handlePositionUpdate, true);
+      window.removeEventListener("resize", handlePositionUpdate);
+    };
+  }, [open, isMobile]);
+
+  return (
+    <>
+      <button
+        ref={anchorRef}
+        onClick={toggle}
+        className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
+        title="More"
+        type="button"
+      >
+        <MoreVertical size={16} className="text-slate-700" />
+      </button>
+
+      {open && (
+        <Portal>
+          {/* Backdrop (click to close) */}
+          <div
+            className="fixed inset-0 z-[199] bg-black/20"
+            onClick={() => setOpen(false)}
+          />
+
+          {/* Menu: mobile = top action sheet; desktop = anchored dropdown */}
+          <div
+            ref={menuRef}
+            className={[
+              "fixed z-[200] bg-white border border-slate-200 shadow-xl",
+              "focus:outline-none",
+              "w-48 rounded-xl overflow-y-auto max-h-[calc(100vh-16px)]"
+            ].join(" ")}
+            style={{
+              top: `${pos?.top ?? 0}px`,
+              left: `${pos?.left ?? 0}px`,
+            }}
+          >
+            <button
+              onClick={() => {
+                setOpen(false);
+                fetchVoterAndFamily(id);
+              }}
+              className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
+              type="button"
+            >
+              <Share2 size={14} /> Share (WA/SMS)
+            </button>
+            <button
+              onClick={() => {
+                setOpen(false);
+                downloadPdfFor(id);
+              }}
+              className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
+              type="button"
+            >
+              <Download size={14} /> Download PDF
+            </button>
+            <button
+              onClick={() => {
+                setOpen(false);
+                callNumber(primaryPhone);
+              }}
+              className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
+              type="button"
+            >
+              <PhoneIcon size={14} /> Call
+            </button>
+            <button
+              onClick={() => {
+                setOpen(false);
+                whatsappNumber(primaryPhone);
+              }}
+              className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
+              type="button"
+            >
+              <MessageCircle size={14} /> WhatsApp
+            </button>
+          </div>
+        </Portal>
+      )}
+    </>
+  );
+}
+
 
   // ---------- UI ----------
   return (
@@ -209,15 +467,67 @@ export default function VotersTable({
         <>
           {/* ===== Admin: selection controls header ===== */}
           {isAdmin && (
-            <SelectionToolbar
-              selectionMode={selectionMode}
-              setSelectionMode={setSelectionMode}
-              allSelected={allSelected}
-              selectedCount={selected.size}
-              onToggleAll={toggleAll}
-              onClear={() => setSelected(new Set())}
-              onOpenDeleteModal={() => setBulkOpen(true)} // ✅ keep only supported prop
-            />
+            <>
+              {!selectionMode ? (
+                <div className="flex items-center justify-end px-3 sm:px-4 py-2 border-b bg-slate-50/60">
+                  <button
+                    onClick={() => {
+                      setSelectionMode(true);
+                      setSelected(new Set());
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-100"
+                    type="button"
+                  >
+                    Delete multiple
+                  </button>
+                </div>
+              ) : (
+                // Visible in BOTH mobile & desktop, includes Select All for mobile
+                <div className="sticky top-0 z-[5] flex items-center justify-between px-3 sm:px-4 py-2 border-b bg-amber-50 border-amber-200">
+                  <div className="flex items-center gap-3">
+                    <label className="inline-flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded border-amber-300"
+                        checked={allSelected}
+                        onChange={(e) => toggleAll(e.target.checked)}
+                      />
+                      <span className="font-medium text-amber-900">Select all</span>
+                    </label>
+                    <span className="text-sm font-medium text-amber-900 hidden sm:inline">
+                      {selected.size} selected
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setSelected(new Set())}
+                      className="px-3 py-1.5 rounded-lg border border-amber-300 text-sm hover:bg-amber-100"
+                      type="button"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={() => setBulkOpen(true)}
+                      className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-sm hover:bg-rose-700 disabled:opacity-50"
+                      type="button"
+                      disabled={selected.size === 0}
+                    >
+                      Delete Selected
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSelectionMode(false);
+                        setSelected(new Set());
+                      }}
+                      className="px-3 py-1.5 rounded-lg border border-amber-300 text-sm hover:bg-amber-100"
+                      type="button"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           {/* ===== MOBILE cards ===== */}
@@ -226,26 +536,105 @@ export default function VotersTable({
               const votedNow = effectiveVoted(it);
               const saving = !!savingVote[String(it.id)];
               return (
-                <VoterCardMobile
-                  key={it.id}
-                  isAdmin={isAdmin}
-                  selectionMode={selectionMode}
-                  selected={selected.has(String(it.id))}
-                  onSelect={(checked) => toggleOne(String(it.id), checked)}
-                  item={it}
-                  votedNow={votedNow}
-                  saving={saving}
-                  onFlipVoted={() => flipVoted(it.id, votedNow)}
-                  onDeleteAsk={() => onDeleteAsk(String(it.id))}
-                  Kebab={
-                    <KebabMenu
-                      onShare={() => fetchVoterAndFamily(it.id)}
-                      onDownload={() => downloadPdfFor(it.id)}
-                      onCall={() => callNumber(it.mobile1)}
-                      onWhatsApp={() => whatsappNumber(it.mobile1)}
-                    />
-                  }
-                />
+                <li key={it.id} className="rounded-xl border border-slate-200 p-3 bg-white shadow-sm">
+                  <div className="flex items-start gap-3">
+                    {isAdmin && selectionMode && (
+                      <input
+                        type="checkbox"
+                        className="mt-1.5 w-4 h-4 rounded border-slate-300"
+                        checked={selected.has(String(it.id))}
+                        onChange={(e) => toggleOne(String(it.id), e.target.checked)}
+                      />
+                    )}
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-semibold text-slate-900 truncate">{it.name}</div>
+                        <span className={`shrink-0 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold border ${getColorBadge(it.colourCode)}`}>
+                          {it.colourCode}
+                        </span>
+                      </div>
+
+                      {it.voterId && <div className="text-[11px] text-slate-500 mt-0.5">ID: {it.voterId}</div>}
+
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-600">
+                        {it.village && <span>{it.village}</span>}
+                        {(it.boothNo || it.partNo) && (
+                          <span className="text-slate-500">
+                            {it.boothNo && `Booth ${it.boothNo}`}
+                            {it.boothNo && it.partNo && " • "}
+                            {it.partNo && `Part ${it.partNo}`}
+                          </span>
+                        )}
+                        {it.mobile1 && <span>📞 {it.mobile1}</span>}
+                      </div>
+
+                      {/* voted/status row */}
+                      <div className="mt-1 flex items-center gap-2">
+                        {isAdmin ? (
+                          <button
+                            disabled={saving}
+                            onClick={() => flipVoted(it.id, votedNow)}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border transition ${
+                              votedNow
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : "bg-rose-50 text-rose-700 border-rose-200"
+                            } ${saving ? "opacity-60 cursor-not-allowed" : "active:scale-95"}`}
+                            title={votedNow ? "Mark Not Voted" : "Mark Voted"}
+                            type="button"
+                          >
+                            {votedNow ? <CheckCircle size={12} /> : <X size={12} />}
+                            {votedNow ? "Voted" : "Not"}
+                          </button>
+                        ) : (
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border ${
+                              votedNow
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : "bg-rose-50 text-rose-700 border-rose-200"
+                            }`}
+                            title={votedNow ? "Voted" : "Not Voted"}
+                          >
+                            {votedNow ? <CheckCircle size={12} /> : <X size={12} />}
+                            {votedNow ? "Voted" : "Not"}
+                          </span>
+                        )}
+
+                        <span
+                          className={`inline-flex px-1.5 py-0.5 rounded-md text-[10px] font-semibold border ${
+                            it.dead ? "bg-slate-100 text-slate-700 border-slate-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          }`}
+                        >
+                          {it.dead ? "Deceased" : "Alive"}
+                        </span>
+                      </div>
+
+                      {/* compact toolbar */}
+                      <div className="mt-3 pt-2 border-t border-slate-200 flex items-center justify-between">
+                        <Link
+                          href={`/voters/${it.id}`}
+                          className="inline-flex items-center justify-center rounded-md p-2 hover:bg-slate-100 active:scale-95 transition"
+                          title="View"
+                        >
+                          <Eye size={18} className="text-slate-700" />
+                        </Link>
+
+                        {isAdmin && !selectionMode && (
+                          <button
+                            onClick={() => onDeleteAsk(String(it.id))}
+                            className="inline-flex items-center justify-center rounded-md p-2 hover:bg-rose-50 active:scale-95 transition"
+                            title="Delete"
+                            type="button"
+                          >
+                            <Trash2 size={18} className="text-rose-600" />
+                          </button>
+                        )}
+
+                        <Kebab id={it.id} primaryPhone={it.mobile1 || null} />
+                      </div>
+                    </div>
+                  </div>
+                </li>
               );
             })}
           </ul>
@@ -279,26 +668,98 @@ export default function VotersTable({
                   const votedNow = effectiveVoted(it);
                   const saving = !!savingVote[String(it.id)];
                   return (
-                    <VoterRowDesktop
-                      key={it.id}
-                      isAdmin={isAdmin}
-                      selectionMode={selectionMode}
-                      selected={selected.has(String(it.id))}
-                      onSelect={(checked) => toggleOne(String(it.id), checked)}
-                      item={it}
-                      votedNow={votedNow}
-                      saving={saving}
-                      onFlipVoted={() => flipVoted(it.id, votedNow)}
-                      onDeleteAsk={() => onDeleteAsk(String(it.id))}
-                      Kebab={
-                        <KebabMenu
-                          onShare={() => fetchVoterAndFamily(it.id)}
-                          onDownload={() => downloadPdfFor(it.id)}
-                          onCall={() => callNumber(it.mobile1)}
-                          onWhatsApp={() => whatsappNumber(it.mobile1)}
-                        />
-                      }
-                    />
+                    <tr key={it.id} className="hover:bg-slate-50 transition-colors">
+                      {isAdmin && selectionMode && (
+                        <td className="px-3 py-4">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 rounded border-slate-300"
+                            checked={selected.has(String(it.id))}
+                            onChange={(e) => toggleOne(String(it.id), e.target.checked)}
+                          />
+                        </td>
+                      )}
+                      <td className="px-4 py-4">
+                        <div className="font-semibold text-slate-900">{it.name}</div>
+                        {it.voterId && <div className="text-xs text-slate-500 mt-1">ID: {it.voterId}</div>}
+                      </td>
+                      <td className="px-4 py-4">
+                        {it.mobile1 ? <div className="text-sm text-slate-700">{it.mobile1}</div> : <span className="text-sm text-slate-400">No contact</span>}
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="text-sm text-slate-700">{it.village || "-"}</div>
+                        {(it.boothNo || it.partNo) && (
+                          <div className="text-xs text-slate-500 mt-1">
+                            {it.boothNo && `Booth ${it.boothNo}`}
+                            {it.boothNo && it.partNo && " • "}
+                            {it.partNo && `Part ${it.partNo}`}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-4">
+                        <span className={`inline-flex px-2.5 py-1 rounded-lg text-xs font-semibold border ${getColorBadge(it.colourCode)}`}>{it.colourCode}</span>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center justify-center">
+                          {isAdmin ? (
+                            <button
+                              disabled={saving}
+                              onClick={() => flipVoted(it.id, votedNow)}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${
+                                votedNow
+                                  ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+                                  : "bg-rose-100 text-rose-700 border-rose-200"
+                              } ${saving ? "opacity-60 cursor-not-allowed" : "hover:shadow active:scale-95"}`}
+                              title={votedNow ? "Mark Not Voted" : "Mark Voted"}
+                              type="button"
+                            >
+                              {votedNow ? <CheckCircle size={16} /> : <X size={16} />}
+                              {votedNow ? "Voted" : "Not"}
+                            </button>
+                          ) : (
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border ${
+                                votedNow
+                                  ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+                                  : "bg-rose-100 text-rose-700 border-rose-200"
+                              }`}
+                              title={votedNow ? "Voted" : "Not Voted"}
+                            >
+                              {votedNow ? <CheckCircle size={16} /> : <X size={16} />}
+                              {votedNow ? "Voted" : "Not"}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center justify-center">
+                          {it.dead ? (
+                            <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">Deceased</span>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 border-emerald-200">Alive</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Only 3 icons: View, (Admin) Delete, Kebab */}
+                          <Link href={`/voters/${it.id}`} className="p-2 rounded-lg hover:bg-slate-100 transition-colors" title="View">
+                            <Eye size={16} className="text-slate-600" />
+                          </Link>
+                          {isAdmin && !selectionMode && (
+                            <button
+                              onClick={() => onDeleteAsk(String(it.id))}
+                              className="p-2 rounded-lg hover:bg-rose-50 transition-colors"
+                              title="Delete"
+                              type="button"
+                            >
+                              <Trash2 size={16} className="text-rose-600" />
+                            </button>
+                          )}
+                          <Kebab id={it.id} primaryPhone={it.mobile1 || null} />
+                        </div>
+                      </td>
+                    </tr>
                   );
                 })}
               </tbody>
@@ -396,7 +857,7 @@ export default function VotersTable({
       {/* BULK DELETE MODAL (admin only) */}
       {isAdmin && (
         <DeleteConfirmModal
-          open={bulkOpen} // ✅ uses state added above
+          open={bulkOpen}
           onClose={() => setBulkOpen(false)}
           onDeleted={async () => {
             setSelected(new Set());
