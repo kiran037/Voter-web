@@ -11,19 +11,6 @@ function toId(s: string) {
 
 type ParamsPromise = { params: Promise<{ batchId: string }> };
 
-type Batch = {
-  id: bigint;
-  fileName: string;
-  status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
-  rowCount: number;
-  successCount: number;
-  failedCount: number;
-  startedAt: Date | null;
-  completedAt: Date | null;
-  createdAt: Date;
-  uploadedById: bigint | null;
-};
-
 export async function GET(req: NextRequest, ctx: ParamsPromise) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -48,21 +35,39 @@ export async function GET(req: NextRequest, ctx: ParamsPromise) {
       uploadedById: true,
     },
   });
-
   if (!b) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  const batch = b as Batch;
+  const processedCount = (b.successCount ?? 0) + (b.failedCount ?? 0);
+  const total = b.rowCount ?? 0;
+
+  // Progress + ETA (derived)
+  const now = Date.now();
+  const started = b.startedAt ? b.startedAt.getTime() : null;
+  const elapsedSec = started ? Math.max(0, (now - started) / 1000) : null;
+  const ratePerSec = elapsedSec && processedCount > 0 ? processedCount / elapsedSec : null;
+
+  let etaSeconds: number | null = null;
+  if (ratePerSec && total > 0 && processedCount < total) {
+    const remaining = total - processedCount;
+    etaSeconds = Math.round(remaining / ratePerSec);
+  }
+
+  const progress = total > 0 ? processedCount / total : (b.status === "COMPLETED" ? 1 : 0);
 
   return NextResponse.json({
-    id: batch.id.toString(),
-    fileName: batch.fileName,
-    status: batch.status,
-    rowCount: batch.rowCount,
-    successCount: batch.successCount,
-    failedCount: batch.failedCount,
-    startedAt: batch.startedAt,
-    completedAt: batch.completedAt,
-    createdAt: batch.createdAt,
-    uploadedById: batch.uploadedById ? batch.uploadedById.toString() : null,
+    id: b.id.toString(),
+    fileName: b.fileName,
+    status: b.status,
+    rowCount: total,
+    successCount: b.successCount,
+    failedCount: b.failedCount,
+    processedCount,
+    progress,            // 0..1
+    ratePerSec,          // rows per second (approx)
+    etaSeconds,          // seconds until completion (approx)
+    startedAt: b.startedAt,
+    completedAt: b.completedAt,
+    createdAt: b.createdAt,
+    uploadedById: b.uploadedById ? b.uploadedById.toString() : null,
   });
 }

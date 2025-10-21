@@ -11,14 +11,21 @@ function esc(v: any) {
 }
 function toBool(v: string | null) {
   if (v == null) return undefined;
-  if (v === "1" || v.toLowerCase() === "true") return true;
-  if (v === "0" || v.toLowerCase() === "false") return false;
+  const s = v.toLowerCase();
+  if (s === "1" || s === "true") return true;
+  if (s === "0" || s === "false") return false;
   return undefined;
+}
+function toInt(v: string | null) {
+  if (!v) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
 }
 function pickColour(v: string | null) {
   if (!v) return undefined;
   const up = v.toUpperCase();
-  if (["OUR", "OPPOSITE", "DOUBTFUL", "OTHER"].includes(up)) return up as "OUR"|"OPPOSITE"|"DOUBTFUL"|"OTHER";
+  if (["OUR", "OPPOSITE", "DOUBTFUL", "OTHER"].includes(up))
+    return up as "OUR" | "OPPOSITE" | "DOUBTFUL" | "OTHER";
   return undefined;
 }
 
@@ -31,6 +38,10 @@ export async function GET(req: NextRequest) {
   const star = toBool(searchParams.get("starVoter"));
   const dead = toBool(searchParams.get("dead"));
 
+  // NEW: numeric filters
+  const boothNo = toInt(searchParams.get("boothNo"));
+  const wardNo = toInt(searchParams.get("wardNo"));
+
   const where: any = {};
   if (q) {
     where.OR = [
@@ -41,12 +52,17 @@ export async function GET(req: NextRequest) {
       { mobile2: { contains: q } },
       { boothName: { contains: q } },
       { familyId: { contains: q } },
+      // also allow search across some new/free-text fields
+      { fatherName: { contains: q } },
+      { partySupport: { contains: q } },
     ];
   }
   if (colour !== undefined) where.colourCode = colour;
   if (voted !== undefined) where.voted = voted;
   if (star !== undefined) where.starVoter = star;
   if (dead !== undefined) where.dead = dead;
+  if (boothNo !== undefined) where.boothNo = boothNo;
+  if (wardNo !== undefined) where.wardNo = wardNo;
 
   // Export up to 50k rows (tweak as needed)
   const MAX = Math.min(50000, Number(searchParams.get("max") || "20000"));
@@ -80,6 +96,13 @@ export async function GET(req: NextRequest) {
       demands: true,
       extraInfo: true,
       dob: true,
+
+      // NEW fields
+      fatherName: true,
+      partySupport: true,
+      wardNo: true,
+      familyIdType: true,
+
       familyId: true,
       relationToHead: true,
       headId: true,
@@ -88,12 +111,15 @@ export async function GET(req: NextRequest) {
     },
   });
 
+  // Updated header to include new fields (kept order logical)
   const header = [
     "id","name","voterId","age","gender","village","houseNo","address",
     "boothName","boothNo","partNo","srn",
     "mobile1","mobile2","email",
     "colourCode","voted","starVoter","dead",
     "caste","profession","demands","extraInfo","dob",
+    // NEW:
+    "fatherName","partySupport","wardNo","familyIdType",
     "familyId","relationToHead","headId",
     "createdAt","updatedAt"
   ];
@@ -125,9 +151,17 @@ export async function GET(req: NextRequest) {
       esc(r.demands ?? ""),
       esc(r.extraInfo ?? ""),
       esc(r.dob ? r.dob.toISOString().slice(0, 10) : ""),
+
+      // NEW fields
+      esc(r.fatherName ?? ""),
+      esc(r.partySupport ?? ""),
+      esc(r.wardNo ?? ""),
+      esc(r.familyIdType ?? ""),
+
       esc(r.familyId ?? ""),
       esc(r.relationToHead ?? ""),
       esc(r.headId ? r.headId.toString() : ""),
+
       esc(r.createdAt.toISOString()),
       esc(r.updatedAt.toISOString()),
     ].join(","));

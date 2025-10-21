@@ -1,4 +1,4 @@
-// src/app/api/voters/[id]/export.pdf/route.ts
+// app/api/voters/[id]/export.pdf/route.ts
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
@@ -34,7 +34,9 @@ export async function GET(req: NextRequest, ctx: ParamsPromise) {
 
   const v = await prisma.voter.findUnique({
     where: { id },
-    include: { head: { select: { id: true, name: true } } },
+    include: {
+      head: { select: { id: true, name: true } },
+    },
   });
   if (!v) return NextResponse.json({ error: "not found" }, { status: 404 });
 
@@ -50,7 +52,7 @@ export async function GET(req: NextRequest, ctx: ParamsPromise) {
 
   const bytes = await buildOnePageMarksheet(v, family); // Uint8Array
 
-  // ✅ Force a plain ArrayBuffer and wrap in a Blob to satisfy TS + NextResponse BodyInit
+  // Force a plain ArrayBuffer and wrap in a Blob to satisfy TS + NextResponse BodyInit
   const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   const blob = new Blob([ab], { type: "application/pdf" });
 
@@ -141,8 +143,9 @@ async function buildOnePageMarksheet(
   const dobStr = fmtDate(v.dob);
   const derivedAge = v.age ?? ageFromDob(v.dob);
   row2("Name", v.name ?? "", "Voter ID", v.voterId ?? "");
+  row2("Father's Name", v.fatherName ?? "-", "Gender", v.gender ?? "-");
   row2("DOB", dobStr || "-", "Age", derivedAge != null ? String(derivedAge) : "-");
-  row2("Gender", v.gender ?? "-", "Village", v.village ?? "-");
+  row2("Village", v.village ?? "-", "Ward No", v.wardNo != null ? String(v.wardNo) : "-");
   row1("Address", v.address ?? "-");
   y -= 8;
 
@@ -160,15 +163,16 @@ async function buildOnePageMarksheet(
   row1("Status", v.dead ? "Deceased" : "Alive");
   y -= 8;
 
-  // SURVEY
-  section("SURVEY DATA");
+  // SURVEY / NOTES
+  section("SURVEY & NOTES");
   row2("Caste", v.caste ?? "-", "Profession", v.profession ?? "-");
   row1("Demands", v.demands ?? "-");
   row1("Notes", v.extraInfo ?? "-");
   y -= 8;
 
-  // FAMILY
-  section("FAMILY INFORMATION");
+  // PARTY / FAMILY META
+  section("FAMILY & SUPPORT");
+  row2("Party Support", v.partySupport ?? "-", "Family ID Type", v.familyIdType ?? "-");
   row2("Family ID", v.familyId ?? "-", "Role", v.relationToHead ?? "-");
   row1("Family Head", v.head?.name ? String(v.head.name) : (v.headId ? String(v.headId) : "-"));
   y -= 10;

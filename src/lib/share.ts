@@ -1,3 +1,4 @@
+// src/lib/share.ts
 import type { Voter, ListRow } from "@/types/voter";
 
 export function buildShareText(v: Voter, family?: ListRow[]) {
@@ -25,7 +26,14 @@ export function buildShareText(v: Voter, family?: ListRow[]) {
   if (v.starVoter) out.push(`Star Voter: Yes`);
   if (v.dead) out.push(`Deceased: Yes`);
 
-  // ——— SURVEY (explicit section)
+  // NEW fields
+  // (Cast to any so this file stays decoupled from Prisma types)
+  const anyV = v as any;
+  if (anyV.fatherName) out.push(`Father's Name: ${anyV.fatherName}`);
+  if (anyV.partySupport) out.push(`Party Support: ${anyV.partySupport}`);
+  if (anyV.wardNo != null) out.push(`Ward No: ${anyV.wardNo}`);
+
+  // ——— SURVEY
   const surveyLines: string[] = [];
   if (v.caste) surveyLines.push(`Caste: ${v.caste}`);
   if (v.profession) surveyLines.push(`Profession: ${v.profession}`);
@@ -40,16 +48,16 @@ export function buildShareText(v: Voter, family?: ListRow[]) {
   // ——— FAMILY META
   const famMeta: string[] = [];
   if (v.familyId) famMeta.push(`Family ID: ${v.familyId}`);
-  if ((v as any).familyIdType) famMeta.push(`Family ID Type: ${(v as any).familyIdType}`);
+  if (anyV.familyIdType) famMeta.push(`Family ID Type: ${anyV.familyIdType}`);
   if (v.relationToHead) famMeta.push(`Role: ${v.relationToHead}`);
-  if (v.head?.name || v.headId) famMeta.push(`Head: ${v.head?.name || v.headId}`);
+  if ((v as any).head?.name || v.headId) famMeta.push(`Head: ${(v as any).head?.name || v.headId}`);
   if (famMeta.length) {
     out.push("");
     out.push(`=== FAMILY ===`);
     out.push(...famMeta);
   }
 
-  // ——— FAMILY MEMBERS (full list)
+  // ——— FAMILY MEMBERS
   if (family?.length) {
     out.push(`Members (${family.length}):`);
     family.forEach((m, i) => {

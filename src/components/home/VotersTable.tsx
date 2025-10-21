@@ -1,4 +1,3 @@
-// src/components/home/VotersTable.tsx
 "use client";
 
 import Link from "next/link";
@@ -15,12 +14,15 @@ import {
   X,
   MapPin,
   IdCard,
+  UsersRound,
+  Map as MapIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ColourCode, VoterListItem, Voter, ListRow } from "@/types/voter";
 import { buildShareText } from "@/lib/share";
 import DeleteConfirmModal from "./DeleteConfirmModal";
 import Portal from "@/components/common/Portal";
+import { useCallback } from "react";
 
 function getColorBadge(code: ColourCode) {
   const styles: Record<ColourCode, string> = {
@@ -47,7 +49,7 @@ export default function VotersTable({
   isAdmin?: boolean;
 }) {
   // ===== selection mode (admin-only) =====
-  const [selectionMode, setSelectionMode] = useState(false); // NEW
+  const [selectionMode, setSelectionMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const allSelected = useMemo(
@@ -80,11 +82,11 @@ export default function VotersTable({
   }
 
   async function flipVoted(id: string | number, currentValue: boolean) {
-    if (!isAdmin) return; // safety: only admins can flip
+    if (!isAdmin) return;
     const key = String(id);
     const nextVal = !currentValue;
     setSavingVote((s) => ({ ...s, [key]: true }));
-    setVotedOverride((m) => ({ ...m, [key]: nextVal })); // optimistic
+    setVotedOverride((m) => ({ ...m, [key]: nextVal }));
 
     try {
       const res = await fetch(`/api/voters/${id}`, {
@@ -149,6 +151,8 @@ export default function VotersTable({
               village: m.village ?? null,
               mobile1: m.mobile1 ?? null,
               colourCode: m.colourCode ?? "OTHER",
+              fatherName: m.fatherName ?? null,
+              wardNo: m.wardNo ?? null,
             }));
         }
       }
@@ -183,7 +187,6 @@ export default function VotersTable({
     })();
   }
 
-  // Quick call / WhatsApp (for everybody)
   function callNumber(raw?: string | null) {
     const num = digitsOnly(raw);
     if (!num) return alert("No phone number");
@@ -208,246 +211,154 @@ export default function VotersTable({
     window.location.href = `sms:?&body=${encoded}`;
   }
 
-function Kebab({
-  id,
-  primaryPhone,
-}: {
-  id: string | number;
-  primaryPhone?: string | null;
-}) {
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
-  const anchorRef = useRef<HTMLButtonElement | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
+  function Kebab({
+    id,
+    primaryPhone,
+  }: {
+    id: string | number;
+    primaryPhone?: string | null;
+  }) {
+    const [open, setOpen] = useState(false);
+    const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+    const [isMobile, setIsMobile] = useState(false);
+    const anchorRef = useRef<HTMLButtonElement | null>(null);
+    const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // Track viewport size to decide mobile vs desktop behavior
-  useEffect(() => {
-    const update = () => setIsMobile(window.innerWidth < 640);
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
+    useEffect(() => {
+      const update = () => setIsMobile(window.innerWidth < 640);
+      update();
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }, []);
 
-  // Close on outside click / ESC / scroll
-  useEffect(() => {
-    if (!open) return;
-    
-    function handleClick(e: MouseEvent) {
-      const t = e.target as Node | null;
-      if (!t) return;
-      const insideAnchor = !!anchorRef.current && anchorRef.current.contains(t);
-      const insideMenu = !!menuRef.current && menuRef.current.contains(t);
-      if (!insideAnchor && !insideMenu) setOpen(false);
-    }
-    
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    
-    function handleScroll() {
-      setOpen(false);
-    }
-    
-    document.addEventListener("click", handleClick, true);
-    document.addEventListener("keydown", handleKey, true);
-    window.addEventListener("scroll", handleScroll, true);
-    window.addEventListener("resize", handleScroll);
-    
-    return () => {
-      document.removeEventListener("click", handleClick, true);
-      document.removeEventListener("keydown", handleKey, true);
-      window.removeEventListener("scroll", handleScroll, true);
-      window.removeEventListener("resize", handleScroll);
-    };
-  }, [open]);
-
-  function calculatePosition() {
-    if (!anchorRef.current) return null;
-
-    const buttonRect = anchorRef.current.getBoundingClientRect();
-    const desktopMenuWidth = 192;
-    const mobileMenuWidth = 160;
-    const menuHeight = 200;
-    const gap = 8;
-    const padding = 8;
-
-    const vp = {
-      w: window.innerWidth,
-      h: window.innerHeight,
-    };
-
-    let left: number;
-    let top: number;
-
-    if (isMobile) {
-      // On mobile: position to the right of the button (which is on the right side)
-      
-      // Try to position to the right of button first
-      left = buttonRect.right + gap;
-      
-      // If it goes off right edge, position to the left of button instead
-      if (left + mobileMenuWidth + padding > vp.w) {
-        left = buttonRect.left - mobileMenuWidth - gap;
+    useEffect(() => {
+      if (!open) return;
+      function handleClick(e: MouseEvent) {
+        const t = e.target as Node | null;
+        if (!t) return;
+        const insideAnchor = !!anchorRef.current && anchorRef.current.contains(t);
+        const insideMenu = !!menuRef.current && menuRef.current.contains(t);
+        if (!insideAnchor && !insideMenu) setOpen(false);
       }
-      
-      // Ensure it stays in bounds horizontally
-      if (left < padding) {
-        left = padding;
+      function handleKey(e: KeyboardEvent) { if (e.key === "Escape") setOpen(false); }
+      function handleScroll() { setOpen(false); }
+      document.addEventListener("click", handleClick, true);
+      document.addEventListener("keydown", handleKey, true);
+      window.addEventListener("scroll", handleScroll, true);
+      window.addEventListener("resize", handleScroll);
+      return () => {
+        document.removeEventListener("click", handleClick, true);
+        document.removeEventListener("keydown", handleKey, true);
+        window.removeEventListener("scroll", handleScroll, true);
+        window.removeEventListener("resize", handleScroll);
+      };
+    }, [open]);
+
+    const calculatePosition = useCallback(() => {
+      if (!anchorRef.current) return null;
+      const buttonRect = anchorRef.current.getBoundingClientRect();
+      const desktopMenuWidth = 192;
+      const mobileMenuWidth = 160;
+      const menuHeight = 200;
+      const gap = 8;
+      const padding = 8;
+      const vp = { w: window.innerWidth, h: window.innerHeight };
+      let left: number;
+      let top: number;
+
+      if (isMobile) {
+        left = buttonRect.right + gap;
+        if (left + mobileMenuWidth + padding > vp.w) left = buttonRect.left - mobileMenuWidth - gap;
+        if (left < padding) left = padding;
+        if (left + mobileMenuWidth > vp.w - padding) left = vp.w - mobileMenuWidth - padding;
+        top = buttonRect.bottom + gap;
+        if (top + menuHeight + padding > vp.h) top = Math.max(padding, buttonRect.top - menuHeight - gap);
+      } else {
+        left = buttonRect.right + gap;
+        top = buttonRect.top;
+        if (left + desktopMenuWidth + padding > vp.w) left = buttonRect.left - desktopMenuWidth - gap;
+        if (left < padding) left = padding;
+        if (left + desktopMenuWidth > vp.w - padding) left = vp.w - desktopMenuWidth - padding;
+        if (top + menuHeight + padding > vp.h) top = buttonRect.top - menuHeight - gap;
+        if (top < padding) top = padding;
       }
-      if (left + mobileMenuWidth > vp.w - padding) {
-        left = vp.w - mobileMenuWidth - padding;
-      }
-      
-      // Try to position below button first
-      top = buttonRect.bottom + gap;
-      
-      // If it goes off bottom, position above instead
-      if (top + menuHeight + padding > vp.h) {
-        top = Math.max(padding, buttonRect.top - menuHeight - gap);
-      }
-    } else {
-      // Desktop: position to the right, with fallback to left
-      left = buttonRect.right + gap;
-      top = buttonRect.top;
+      return { top, left };
+    }, [isMobile]);
 
-      // If menu would overflow right, position it to the left
-      if (left + desktopMenuWidth + padding > vp.w) {
-        left = buttonRect.left - desktopMenuWidth - gap;
-      }
 
-      // Ensure left stays within bounds
-      if (left < padding) {
-        left = padding;
-      }
-      if (left + desktopMenuWidth > vp.w - padding) {
-        left = vp.w - desktopMenuWidth - padding;
-      }
-
-      // If menu would overflow bottom, position it above
-      if (top + menuHeight + padding > vp.h) {
-        top = buttonRect.top - menuHeight - gap;
-      }
-
-      // Ensure top stays within bounds
-      if (top < padding) {
-        top = padding;
-      }
-    }
-
-    return { top, left };
-  }
-
-  function toggle(e: React.MouseEvent<HTMLButtonElement>) {
-    if (open) {
-      setOpen(false);
-      return;
-    }
-
-    // Calculate position for both mobile and desktop
-    const newPos = calculatePosition();
-    setPos(newPos);
-    setOpen(true);
-  }
-
-  // Recalculate position when menu opens or on scroll
-  useEffect(() => {
-    if (!open || isMobile) return;
-
-    const handlePositionUpdate = () => {
+    function toggle() {
+      if (open) { setOpen(false); return; }
       const newPos = calculatePosition();
       setPos(newPos);
-    };
+      setOpen(true);
+    }
 
-    window.addEventListener("scroll", handlePositionUpdate, true);
-    window.addEventListener("resize", handlePositionUpdate);
+    useEffect(() => {
+      if (!open || isMobile) return;
+      const handlePositionUpdate = () => setPos(calculatePosition());
+      window.addEventListener("scroll", handlePositionUpdate, true);
+      window.addEventListener("resize", handlePositionUpdate);
+      return () => {
+        window.removeEventListener("scroll", handlePositionUpdate, true);
+        window.removeEventListener("resize", handlePositionUpdate);
+      };
+    }, [open, isMobile, calculatePosition]);
 
-    return () => {
-      window.removeEventListener("scroll", handlePositionUpdate, true);
-      window.removeEventListener("resize", handlePositionUpdate);
-    };
-  }, [open, isMobile]);
 
-  return (
-    <>
-      <button
-        ref={anchorRef}
-        onClick={toggle}
-        className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
-        title="More"
-        type="button"
-      >
-        <MoreVertical size={16} className="text-slate-700" />
-      </button>
+    return (
+      <>
+        <button
+          ref={anchorRef}
+          onClick={toggle}
+          className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
+          title="More"
+          type="button"
+        >
+          <MoreVertical size={16} className="text-slate-700" />
+        </button>
 
-      {open && (
-        <Portal>
-          {/* Backdrop (click to close) */}
-          <div
-            className="fixed inset-0 z-[199] bg-black/20"
-            onClick={() => setOpen(false)}
-          />
-
-          {/* Menu: mobile = top action sheet; desktop = anchored dropdown */}
-          <div
-            ref={menuRef}
-            className={[
-              "fixed z-[200] bg-white border border-slate-200 shadow-xl",
-              "focus:outline-none",
-              "w-48 rounded-xl overflow-y-auto max-h-[calc(100vh-16px)]"
-            ].join(" ")}
-            style={{
-              top: `${pos?.top ?? 0}px`,
-              left: `${pos?.left ?? 0}px`,
-            }}
-          >
-            <button
-              onClick={() => {
-                setOpen(false);
-                fetchVoterAndFamily(id);
-              }}
-              className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
-              type="button"
+        {open && (
+          <Portal>
+            <div className="fixed inset-0 z-[199] bg-black/20" onClick={() => setOpen(false)} />
+            <div
+              ref={menuRef}
+              className="fixed z-[200] bg-white border border-slate-200 shadow-xl focus:outline-none w-48 rounded-xl overflow-y-auto max-h-[calc(100vh-16px)]"
+              style={{ top: `${pos?.top ?? 0}px`, left: `${pos?.left ?? 0}px` }}
             >
-              <Share2 size={14} /> Share (WA/SMS)
-            </button>
-            <button
-              onClick={() => {
-                setOpen(false);
-                downloadPdfFor(id);
-              }}
-              className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
-              type="button"
-            >
-              <Download size={14} /> Download PDF
-            </button>
-            <button
-              onClick={() => {
-                setOpen(false);
-                callNumber(primaryPhone);
-              }}
-              className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
-              type="button"
-            >
-              <PhoneIcon size={14} /> Call
-            </button>
-            <button
-              onClick={() => {
-                setOpen(false);
-                whatsappNumber(primaryPhone);
-              }}
-              className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
-              type="button"
-            >
-              <MessageCircle size={14} /> WhatsApp
-            </button>
-          </div>
-        </Portal>
-      )}
-    </>
-  );
-}
-
+              <button
+                onClick={() => { setOpen(false); fetchVoterAndFamily(id); }}
+                className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
+                type="button"
+              >
+                <Share2 size={14} /> Share (WA/SMS)
+              </button>
+              <button
+                onClick={() => { setOpen(false); downloadPdfFor(id); }}
+                className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
+                type="button"
+              >
+                <Download size={14} /> Download PDF
+              </button>
+              <button
+                onClick={() => { setOpen(false); callNumber(primaryPhone); }}
+                className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
+                type="button"
+              >
+                <PhoneIcon size={14} /> Call
+              </button>
+              <button
+                onClick={() => { setOpen(false); whatsappNumber(primaryPhone); }}
+                className="w-full px-4 py-3 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
+                type="button"
+              >
+                <MessageCircle size={14} /> WhatsApp
+              </button>
+            </div>
+          </Portal>
+        )}
+      </>
+    );
+  }
 
   // ---------- UI ----------
   return (
@@ -471,10 +382,7 @@ function Kebab({
               {!selectionMode ? (
                 <div className="flex items-center justify-end px-3 sm:px-4 py-2 border-b bg-slate-50/60">
                   <button
-                    onClick={() => {
-                      setSelectionMode(true);
-                      setSelected(new Set());
-                    }}
+                    onClick={() => { setSelectionMode(true); setSelected(new Set()); }}
                     className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm hover:bg-slate-100"
                     type="button"
                   >
@@ -482,7 +390,6 @@ function Kebab({
                   </button>
                 </div>
               ) : (
-                // Visible in BOTH mobile & desktop, includes Select All for mobile
                 <div className="sticky top-0 z-[5] flex items-center justify-between px-3 sm:px-4 py-2 border-b bg-amber-50 border-amber-200">
                   <div className="flex items-center gap-3">
                     <label className="inline-flex items-center gap-2 text-sm">
@@ -515,10 +422,7 @@ function Kebab({
                       Delete Selected
                     </button>
                     <button
-                      onClick={() => {
-                        setSelectionMode(false);
-                        setSelected(new Set());
-                      }}
+                      onClick={() => { setSelectionMode(false); setSelected(new Set()); }}
                       className="px-3 py-1.5 rounded-lg border border-amber-300 text-sm hover:bg-amber-100"
                       type="button"
                     >
@@ -557,6 +461,20 @@ function Kebab({
 
                       {it.voterId && <div className="text-[11px] text-slate-500 mt-0.5">ID: {it.voterId}</div>}
 
+                      {/* NEW: father + ward row */}
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-600">
+                        {it.fatherName && (
+                          <span className="inline-flex items-center gap-1">
+                            <UsersRound size={12} /> {it.fatherName}
+                          </span>
+                        )}
+                        {typeof it.wardNo === "number" && (
+                          <span className="inline-flex items-center gap-1">
+                            <MapIcon size={12} /> Ward {it.wardNo}
+                          </span>
+                        )}
+                      </div>
+
                       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-600">
                         {it.village && <span>{it.village}</span>}
                         {(it.boothNo || it.partNo) && (
@@ -575,11 +493,10 @@ function Kebab({
                           <button
                             disabled={saving}
                             onClick={() => flipVoted(it.id, votedNow)}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border transition ${
-                              votedNow
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border transition ${votedNow
                                 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                                 : "bg-rose-50 text-rose-700 border-rose-200"
-                            } ${saving ? "opacity-60 cursor-not-allowed" : "active:scale-95"}`}
+                              } ${saving ? "opacity-60 cursor-not-allowed" : "active:scale-95"}`}
                             title={votedNow ? "Mark Not Voted" : "Mark Voted"}
                             type="button"
                           >
@@ -588,11 +505,10 @@ function Kebab({
                           </button>
                         ) : (
                           <span
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border ${
-                              votedNow
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border ${votedNow
                                 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                                 : "bg-rose-50 text-rose-700 border-rose-200"
-                            }`}
+                              }`}
                             title={votedNow ? "Voted" : "Not Voted"}
                           >
                             {votedNow ? <CheckCircle size={12} /> : <X size={12} />}
@@ -601,9 +517,8 @@ function Kebab({
                         )}
 
                         <span
-                          className={`inline-flex px-1.5 py-0.5 rounded-md text-[10px] font-semibold border ${
-                            it.dead ? "bg-slate-100 text-slate-700 border-slate-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                          }`}
+                          className={`inline-flex px-1.5 py-0.5 rounded-md text-[10px] font-semibold border ${it.dead ? "bg-slate-100 text-slate-700 border-slate-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            }`}
                         >
                           {it.dead ? "Deceased" : "Alive"}
                         </span>
@@ -655,6 +570,8 @@ function Kebab({
                     </th>
                   )}
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Voter Info</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Father</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Ward</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Contact</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Location</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Voter's Side</th>
@@ -684,6 +601,12 @@ function Kebab({
                         {it.voterId && <div className="text-xs text-slate-500 mt-1">ID: {it.voterId}</div>}
                       </td>
                       <td className="px-4 py-4">
+                        <div className="text-sm text-slate-700">{it.fatherName || "—"}</div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="text-sm text-slate-700">{typeof it.wardNo === "number" ? `Ward ${it.wardNo}` : "—"}</div>
+                      </td>
+                      <td className="px-4 py-4">
                         {it.mobile1 ? <div className="text-sm text-slate-700">{it.mobile1}</div> : <span className="text-sm text-slate-400">No contact</span>}
                       </td>
                       <td className="px-4 py-4">
@@ -705,11 +628,10 @@ function Kebab({
                             <button
                               disabled={saving}
                               onClick={() => flipVoted(it.id, votedNow)}
-                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${
-                                votedNow
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${votedNow
                                   ? "bg-emerald-100 text-emerald-700 border-emerald-200"
                                   : "bg-rose-100 text-rose-700 border-rose-200"
-                              } ${saving ? "opacity-60 cursor-not-allowed" : "hover:shadow active:scale-95"}`}
+                                } ${saving ? "opacity-60 cursor-not-allowed" : "hover:shadow active:scale-95"}`}
                               title={votedNow ? "Mark Not Voted" : "Mark Voted"}
                               type="button"
                             >
@@ -718,11 +640,10 @@ function Kebab({
                             </button>
                           ) : (
                             <span
-                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border ${
-                                votedNow
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border ${votedNow
                                   ? "bg-emerald-100 text-emerald-700 border-emerald-200"
                                   : "bg-rose-100 text-rose-700 border-rose-200"
-                              }`}
+                                }`}
                               title={votedNow ? "Voted" : "Not Voted"}
                             >
                               {votedNow ? <CheckCircle size={16} /> : <X size={16} />}
@@ -742,7 +663,6 @@ function Kebab({
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex items-center justify-end gap-1.5">
-                          {/* Only 3 icons: View, (Admin) Delete, Kebab */}
                           <Link href={`/voters/${it.id}`} className="p-2 rounded-lg hover:bg-slate-100 transition-colors" title="View">
                             <Eye size={16} className="text-slate-600" />
                           </Link>

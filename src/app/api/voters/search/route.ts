@@ -16,12 +16,13 @@ export async function GET(req: NextRequest) {
   const where: Record<string, any> = {};
   if (q) {
     where.OR = [
-      { name:    { contains: q } },
-      { village: { contains: q } },
-      { voterId: { contains: q } },
-      { mobile1: { contains: q } },
-      { mobile2: { contains: q } },
-      { familyId:{ contains: q } }, // allow searching by family string too
+      { name:       { contains: q } },
+      { fatherName: { contains: q } }, // NEW: search by fatherName
+      { village:    { contains: q } },
+      { voterId:    { contains: q } },
+      { mobile1:    { contains: q } },
+      { mobile2:    { contains: q } },
+      { familyId:   { contains: q } },
     ];
   }
   if (familyIdParam) {

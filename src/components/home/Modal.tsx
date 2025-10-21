@@ -1,3 +1,4 @@
+///Users/xeoren/voter-web/src/components/home/Modal.tsx
 "use client";
 
 import { X } from "lucide-react";

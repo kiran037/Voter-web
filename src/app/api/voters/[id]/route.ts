@@ -54,11 +54,18 @@ export async function GET(_: NextRequest, ctx: ParamsPromise) {
     voted: v.voted,
     starVoter: v.starVoter,
     dead: v.dead,
+
     caste: v.caste,
     profession: v.profession,
     demands: v.demands,
     extraInfo: v.extraInfo,
     dob: v.dob,
+
+    // NEW fields in response
+    fatherName: v.fatherName,
+    partySupport: v.partySupport,
+    wardNo: v.wardNo,
+
     familyId: v.familyId,
     familyIdType: v.familyIdType as FamilyIdType | null,
     relationToHead: v.relationToHead as FamilyRole | null,
@@ -73,7 +80,7 @@ export async function GET(_: NextRequest, ctx: ParamsPromise) {
 export async function PUT(req: NextRequest, ctx: ParamsPromise) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  // If you ever want edits admin-only, just uncomment:
+  // If you want edits admin-only, uncomment:
   // if (!isAdmin(user)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const { id: idStr } = await ctx.params;
@@ -91,9 +98,10 @@ export async function PUT(req: NextRequest, ctx: ParamsPromise) {
     const partNo  = typeof body.partNo  === "number" ? body.partNo  : undefined;
     const srn     = typeof body.srn     === "number" ? body.srn     : undefined;
     const age     = typeof body.age     === "number" ? body.age     : undefined;
+    const wardNo  = typeof body.wardNo  === "number" ? body.wardNo  : undefined; // NEW
 
     let headIdToSet: bigint | null | undefined = undefined;
-    if (body.hasOwnProperty("headId")) {
+    if (Object.prototype.hasOwnProperty.call(body, "headId")) {
       if (body.headId === null) headIdToSet = null;
       else if (typeof body.headId === "string" && body.headId.trim()) {
         const b = toId(body.headId.trim());
@@ -107,7 +115,7 @@ export async function PUT(req: NextRequest, ctx: ParamsPromise) {
     }
 
     const familyIdToSet: string | null | undefined =
-      body.hasOwnProperty("familyId")
+      Object.prototype.hasOwnProperty.call(body, "familyId")
         ? (typeof body.familyId === "string" ? body.familyId.trim() || null : null)
         : undefined;
 
@@ -137,6 +145,12 @@ export async function PUT(req: NextRequest, ctx: ParamsPromise) {
         demands: typeof body.demands === "string" ? body.demands : undefined,
         extraInfo: typeof body.extraInfo === "string" ? body.extraInfo : undefined,
         dob: body.dob ? new Date(body.dob) : undefined,
+
+        // NEW fields (make them patchable)
+        fatherName: typeof body.fatherName === "string" ? body.fatherName : undefined,
+        partySupport: typeof body.partySupport === "string" ? body.partySupport : undefined,
+        wardNo,
+
         familyId: familyIdToSet,
         familyIdType: famType,
         relationToHead: rel,

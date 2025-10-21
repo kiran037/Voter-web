@@ -28,7 +28,7 @@ export default function HomeClient() {
         const j = await r.json().catch(() => ({}));
         const role = j?.user?.role ?? "STAFF";
         if (!cancelled) setIsAdmin(role === "ADMIN");
-      } catch {}
+      } catch { }
     })();
     return () => {
       cancelled = true;
@@ -122,16 +122,20 @@ export default function HomeClient() {
     return () => ctrl.abort();
   }, [loadList]);
 
-  // Refresh when children broadcast
   useEffect(() => {
+    let active = true;
     const onRefresh = () => {
+      if (!active) return;
       const ctrl = new AbortController();
       loadList(ctrl.signal);
-      // cleanup will happen in the effect above when rerendering
     };
     window.addEventListener("voters:refresh", onRefresh);
-    return () => window.removeEventListener("voters:refresh", onRefresh);
+    return () => {
+      active = false;
+      window.removeEventListener("voters:refresh", onRefresh);
+    };
   }, [loadList]);
+
 
   // ---------- modals ----------
   const [addOpen, setAddOpen] = useState(false);

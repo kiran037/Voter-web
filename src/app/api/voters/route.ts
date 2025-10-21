@@ -1,9 +1,10 @@
-// app/api/voters/route.ts
+// // app/api/voters/route.ts
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/role";
+import type { FamilyIdType, ColourCode } from "@prisma/client";
 
 // ---------- helpers ----------
 function toBool(v: string | null) {
@@ -41,6 +42,10 @@ type VoterListRow = {
   starVoter: boolean;
   dead: boolean;
   updatedAt: Date;
+
+  // 🔴 added for Home table
+  fatherName: string | null;
+  wardNo: number | null;
 };
 
 // ---------- handlers ----------
@@ -56,7 +61,7 @@ export async function GET(req: NextRequest) {
   const star = toBool(searchParams.get("starVoter"));
   const dead = toBool(searchParams.get("dead"));
 
-  // NEW: boothNo filter (numeric)
+  // boothNo filter (numeric)
   const boothNoParam = (searchParams.get("boothNo") || "").trim();
   const boothNo = boothNoParam ? toInt(boothNoParam) : undefined;
 
@@ -64,6 +69,7 @@ export async function GET(req: NextRequest) {
   if (q) {
     where.OR = [
       { name: { contains: q } },
+      { fatherName: { contains: q } },
       { village: { contains: q } },
       { voterId: { contains: q } },
       { mobile1: { contains: q } },
@@ -99,12 +105,20 @@ export async function GET(req: NextRequest) {
         starVoter: true,
         dead: true,
         updatedAt: true,
+
+        // 🔴 ensure these are returned
+        fatherName: true,
+        wardNo: true,
       },
     }),
   ]);
 
   const typedRows = rows as VoterListRow[];
-  const items = typedRows.map((r) => ({ ...r, id: r.id.toString() }));
+  const items = typedRows.map((r) => ({
+    ...r,
+    id: r.id.toString(),
+    // (Dates will be serialized to ISO by NextResponse.json)
+  }));
 
   return NextResponse.json({ page, limit, total, items });
 }
@@ -124,6 +138,12 @@ export async function POST(req: NextRequest) {
 
     const familyId: string | null =
       typeof body.familyId === "string" && body.familyId.trim() ? body.familyId.trim() : null;
+
+    // optional enum (string) -> FamilyIdType
+    const familyIdType: FamilyIdType | null =
+      typeof body.familyIdType === "string" && body.familyIdType.trim()
+        ? (body.familyIdType.toUpperCase() as FamilyIdType)
+        : null;
 
     let headIdBig: bigint | null = null;
     if (body.headId != null) {
@@ -156,7 +176,7 @@ export async function POST(req: NextRequest) {
         mobile1: body.mobile1 ?? null,
         mobile2: body.mobile2 ?? null,
         email: body.email ?? null,
-        colourCode: (body.colourCode as Colour) ?? "OTHER",
+        colourCode: (body.colourCode as ColourCode) ?? "OTHER",
         voted: typeof body.voted === "boolean" ? body.voted : false,
         starVoter: typeof body.starVoter === "boolean" ? body.starVoter : false,
         dead: typeof body.dead === "boolean" ? body.dead : false,
@@ -168,7 +188,13 @@ export async function POST(req: NextRequest) {
 
         dob: body.dob ? new Date(body.dob) : null,
 
+        // NEW fields
+        fatherName: typeof body.fatherName === "string" ? body.fatherName : null,
+        partySupport: typeof body.partySupport === "string" ? body.partySupport : null,
+        wardNo: typeof body.wardNo === "number" ? body.wardNo : null,
+
         familyId,
+        familyIdType,
         relationToHead:
           typeof body.relationToHead === "string" && body.relationToHead.trim()
             ? (body.relationToHead as any)

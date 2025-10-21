@@ -8,7 +8,7 @@ import type { FamilyIdType, FamilyRole } from "@prisma/client";
 function toId(s: string) { try { return BigInt(s); } catch { return null; } }
 type ParamsPromise = { params: Promise<{ id: string }> };
 
-// GET: family summary for this voter (group by same string familyId)
+// GET: family summary for this voter (grouped by same string familyId)
 export async function GET(_: NextRequest, ctx: ParamsPromise) {
   const { id: idStr } = await ctx.params;
   const voterId = toId(idStr);
@@ -16,16 +16,14 @@ export async function GET(_: NextRequest, ctx: ParamsPromise) {
 
   const v = await prisma.voter.findUnique({
     where: { id: voterId },
-    select: {
-      id: true, name: true, familyId: true, headId: true, relationToHead: true,
-    },
+    select: { id: true, name: true, familyId: true, headId: true, relationToHead: true },
   });
   if (!v) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   if (!v.familyId) {
     return NextResponse.json({
       familyId: null,
-      you: { id: v.id.toString(), name: v.name, relationToHead: v.relationToHead },
+      you: { id: v.id.toString(), name: v.name, relationToHead: v.relationToHead as FamilyRole | null },
       head: null,
       members: [],
     });
@@ -37,7 +35,7 @@ export async function GET(_: NextRequest, ctx: ParamsPromise) {
     orderBy: { id: "asc" },
   });
 
-  // resolve head: prefer explicit relationToHead == HEAD; else someone referenced by headId
+  // Resolve head: prefer explicit HEAD; otherwise someone referenced by others' headId
   const explicitHead = members.find(m => m.relationToHead === "HEAD");
   let head = explicitHead;
   if (!head) {
@@ -47,7 +45,7 @@ export async function GET(_: NextRequest, ctx: ParamsPromise) {
 
   return NextResponse.json({
     familyId: v.familyId,
-    you: { id: v.id.toString(), name: v.name, relationToHead: v.relationToHead },
+    you: { id: v.id.toString(), name: v.name, relationToHead: v.relationToHead as FamilyRole | null },
     head: head ? { id: head.id.toString(), name: head.name } : null,
     members: members
       .filter(m => m.id !== v.id)
@@ -61,9 +59,9 @@ export async function GET(_: NextRequest, ctx: ParamsPromise) {
 
 // POST: join/move family or set head
 // Body examples:
-// { "familyId": "JAN12345" }                             -> join/move to this family string
+// { "familyId": "JAN12345" }
 // { "familyId": "JAN12345", "familyIdType": "JAN_AADHAAR_FAMILY_ID" }
-// { "familyId": "JAN12345", "setHead": true }            -> also mark this voter as HEAD
+// { "familyId": "JAN12345", "setHead": true }
 export async function POST(req: NextRequest, ctx: ParamsPromise) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -72,7 +70,7 @@ export async function POST(req: NextRequest, ctx: ParamsPromise) {
   const voterId = toId(idStr);
   if (!voterId) return NextResponse.json({ error: "invalid id" }, { status: 400 });
 
-  const body = await req.json().catch(() => ({}));
+  const body = await req.json().catch(() => ({} as any));
   const familyId = typeof body.familyId === "string" ? body.familyId.trim() : "";
   const setHead = !!body.setHead;
   const famType: FamilyIdType | undefined =
@@ -82,14 +80,14 @@ export async function POST(req: NextRequest, ctx: ParamsPromise) {
     return NextResponse.json({ error: "familyId (string) required" }, { status: 400 });
   }
 
-  // Move into family (string) + optionally mark as head and point others' headId
+  // Move into family (string) + optionally mark as HEAD and null headId
   await prisma.voter.update({
     where: { id: voterId },
     data: {
       familyId,
       familyIdType: famType,
-      relationToHead: setHead ? "HEAD" : undefined,
-      headId: setHead ? null : undefined, // head's headId should be null
+      relationToHead: setHead ? ("HEAD" as FamilyRole) : undefined,
+      headId: setHead ? null : undefined,
     },
   });
 
@@ -97,7 +95,7 @@ export async function POST(req: NextRequest, ctx: ParamsPromise) {
     // set other members' headId to this voter (only within same familyId)
     await prisma.voter.updateMany({
       where: { familyId, NOT: { id: voterId } },
-      data: { headId: voterId as any },
+      data: { headId: voterId as unknown as bigint },
     });
   }
 

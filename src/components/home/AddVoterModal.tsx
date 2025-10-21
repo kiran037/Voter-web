@@ -1,4 +1,3 @@
-// // src/components/home/AddVoterModal.tsx
 "use client";
 
 import Modal from "./Modal";
@@ -14,6 +13,16 @@ export type AddForm = {
   village: string;
   houseNo: string;
   address: string;
+
+  /** NEW: Ward No (numeric string) */
+  wardNo: string;
+
+  /** NEW: Father Name */
+  fatherName: string;
+
+  /** NEW: Party Support */
+  partySupport: string;
+
   boothName: string;
   boothNo: string;
   partNo: string;
@@ -59,6 +68,9 @@ export default function AddVoterModal({
     village: "",
     houseNo: "",
     address: "",
+    wardNo: "",
+    fatherName: "",
+    partySupport: "",
     boothName: "",
     boothNo: "",
     partNo: "",
@@ -92,15 +104,17 @@ export default function AddVoterModal({
 
     const t = toast.loading("Adding voter...");
     try {
-      // enforce uppercase/format server-side too
       const payload: any = {
         name: form.name.trim(),
-        voterId: (form.voterId.trim() ? form.voterId.trim().toUpperCase() : null),
+        voterId: form.voterId.trim() ? form.voterId.trim().toUpperCase() : null,
         age: numOrNull(form.age),
         gender: form.gender || null,
         village: form.village.trim() || null,
         houseNo: form.houseNo.trim() || null,
         address: form.address.trim() || null,
+        wardNo: numOrNull(form.wardNo),
+        fatherName: form.fatherName.trim() || null,
+        partySupport: form.partySupport.trim() || null, // NEW
         boothName: form.boothName.trim() || null,
         boothNo: numOrNull(form.boothNo),
         partNo: numOrNull(form.partNo),
@@ -153,6 +167,9 @@ export default function AddVoterModal({
         village: "",
         houseNo: "",
         address: "",
+        wardNo: "",
+        fatherName: "",
+        partySupport: "",
         boothName: "",
         boothNo: "",
         partNo: "",
@@ -201,7 +218,13 @@ export default function AddVoterModal({
               value={form.name}
               onChange={(e) => setF("name", e.target.value)}
             />
-
+            {/* Father Name */}
+            <input
+              className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none"
+              placeholder="Father's Name"
+              value={form.fatherName}
+              onChange={(e) => setF("fatherName", e.target.value)}
+            />
             {/* Voter ID (always uppercase) */}
             <input
               className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none"
@@ -209,8 +232,7 @@ export default function AddVoterModal({
               value={form.voterId}
               onChange={(e) => setF("voterId", e.target.value.toUpperCase())}
             />
-
-            {/* Age (editable) */}
+            {/* Age */}
             <input
               className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none"
               placeholder="Age"
@@ -218,7 +240,6 @@ export default function AddVoterModal({
               value={form.age}
               onChange={(e) => setF("age", e.target.value.replace(/\D/g, ""))}
             />
-
             <select
               className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none"
               value={form.gender}
@@ -229,13 +250,12 @@ export default function AddVoterModal({
               <option value="F">Female</option>
               <option value="O">Other</option>
             </select>
-
             <input
               className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none"
               placeholder="Date of Birth"
               type="date"
               value={form.dob}
-              onChange={(e) => setForm((s) => ({ ...s, dob: e.target.value }))}
+              onChange={(e) => setF("dob", e.target.value)}
             />
           </div>
         </div>
@@ -243,9 +263,11 @@ export default function AddVoterModal({
         {/* Address */}
         <div>
           <h3 className="text-sm font-semibold text-slate-700 mb-3">Address Details</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
             <input className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none" placeholder="Village" value={form.village} onChange={(e) => setF("village", e.target.value)} />
             <input className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none" placeholder="House No." value={form.houseNo} onChange={(e) => setF("houseNo", e.target.value)} />
+            {/* Ward No (numeric) */}
+            <input className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none" placeholder="Ward No." inputMode="numeric" value={form.wardNo} onChange={(e) => setF("wardNo", e.target.value.replace(/\D/g, ""))} />
             <input className="col-span-full md:col-span-2 px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none" placeholder="Address" value={form.address} onChange={(e) => setF("address", e.target.value)} />
           </div>
         </div>
@@ -275,14 +297,26 @@ export default function AddVoterModal({
         <div>
           <h3 className="text-sm font-semibold text-slate-700 mb-3">Classification & Status</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <select className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none" value={form.colourCode} onChange={(e) => setF("colourCode", e.target.value as any)}>
+            {/* Party Support - NEW */}
+            <input
+              className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none"
+              placeholder="Party Support (e.g., INC / BJP / BSP / Independent / Neutral)"
+              value={form.partySupport}
+              onChange={(e) => setF("partySupport", e.target.value)}
+            />
+            <select
+              className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none"
+              value={form.colourCode}
+              onChange={(e) => setF("colourCode", e.target.value as any)}
+            >
               <option value="">Colour Code (default Other)</option>
               <option value="OUR">Our</option>
               <option value="OPPOSITE">Opposite</option>
               <option value="DOUBTFUL">Doubtful</option>
               <option value="OTHER">Other</option>
             </select>
-            <div className="flex items-center gap-4">
+
+            <div className="md:col-span-2 flex items-center gap-4">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-[#EF3340] focus:ring-[#EF3340]" checked={form.voted} onChange={(e) => setF("voted", e.target.checked)} />
                 <span className="text-sm text-slate-700">Voted</span>
@@ -314,7 +348,6 @@ export default function AddVoterModal({
         <div>
           <h3 className="text-sm font-semibold text-slate-700 mb-3">Family (Optional)</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-            {/* Family ID (always uppercase) */}
             <input
               className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none"
               placeholder="Family ID (e.g., Jan Aadhaar / Ration)"
@@ -336,15 +369,11 @@ export default function AddVoterModal({
               <option value="SIBLING">Sibling</option>
               <option value="OTHER">Other</option>
             </select>
-
-            {/* Head Voter ID (alphanumeric only, uppercase) */}
             <input
               className="px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none"
               placeholder="Head Voter ID (A–Z, 0–9)"
               value={form.headId}
-              onChange={(e) =>
-                setF("headId", e.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase())
-              }
+              onChange={(e) => setF("headId", e.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase())}
             />
           </div>
           <p className="text-xs text-slate-500 mt-2">

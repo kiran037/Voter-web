@@ -133,16 +133,21 @@ model Voter {
   dead       Boolean    @default(false)
 
   // Survey / profiling (pruned to essentials)
-  caste      String?  @db.VarChar(191)
-  profession String?  @db.VarChar(191)
-  demands    String?  @db.VarChar(512)
-  extraInfo  String?  @db.VarChar(512) // single flexible note field
+  caste      String?   @db.VarChar(191)
+  profession String?   @db.VarChar(191)
+  demands    String?   @db.VarChar(512)
+  extraInfo  String?   @db.VarChar(512) // single flexible note field
   dob        DateTime?
 
+  // NEW fields
+  fatherName   String? @db.VarChar(191) // Father's name
+  partySupport String? @db.VarChar(64) // Which party they support (free-text for flexibility)
+  wardNo       Int?    @db.UnsignedInt // Ward number (numeric; switch to String? if needed)
+
   // 👉 Simple family linking (all members sharing the same familyId)
-  familyId      String?       @db.VarChar(64)   // e.g., Jan Aadhaar Family ID / Ration Card No
-  familyIdType  FamilyIdType? // optional classification
-  relationToHead FamilyRole?  // optional; use "HEAD" for the designated head
+  familyId       String?       @db.VarChar(64) // e.g., Jan Aadhaar Family ID / Ration Card No
+  familyIdType   FamilyIdType? // optional classification
+  relationToHead FamilyRole? // optional; use "HEAD" for the designated head
 
   // Optional: self-reference to the head voter (no hard DB guarantee that it shares same familyId)
   headId  BigInt? @db.UnsignedBigInt
@@ -162,13 +167,16 @@ model Voter {
   @@index([mobile2])
   @@index([familyId])
   @@index([headId])
-
+  @@index([wardNo])
+  @@index([partySupport])
   // Requires MySQL with FULLTEXT support on InnoDB (5.7+/8.0+)
-  @@fulltext([name, village, address, boothName])
+  @@fulltext([name, village, address, boothName, fatherName])
 }
 
 ////////////////////////////////////////////////////////////
 // Bulk Upload: Excel → Batch → Row results
+// NOTE: Enforce the "max 1500 rows per file" limit in application code
+// during parsing/chunking before creating ImportRow records.
 ////////////////////////////////////////////////////////////
 
 model ImportBatch {
@@ -181,6 +189,9 @@ model ImportBatch {
   startedAt    DateTime?
   completedAt  DateTime?
   createdAt    DateTime     @default(now())
+
+  // Optional: record the cap you enforced in code (helps auditing)
+  maxRowsAllowed Int @default(1500) @db.UnsignedInt
 
   uploadedById BigInt? @db.UnsignedBigInt
   uploadedBy   User?   @relation(fields: [uploadedById], references: [id])
@@ -203,9 +214,15 @@ model ImportRow {
   // Useful for dedupe/upsert logic during import
   voterIdStr String? @db.VarChar(64)
   phone1     String? @db.VarChar(20)
+
   // Optional: carry the family ID that came from the sheet (helps debugging)
-  familyExternalId String? @db.VarChar(64)
+  familyExternalId String?       @db.VarChar(64)
   familyIdType     FamilyIdType?
+
+  // NEW: capture raw parsed values from sheet for mapping
+  fatherNameStr   String? @db.VarChar(191)
+  partySupportStr String? @db.VarChar(64)
+  wardNoStr       String? @db.VarChar(32)
 
   // If processed to a Voter, link it
   voterId BigInt? @db.UnsignedBigInt

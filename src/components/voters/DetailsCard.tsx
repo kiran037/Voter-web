@@ -1,8 +1,25 @@
-// // src/components/voters/DetailsCard.tsx
 "use client";
 
 import { Building2, MapPin, Phone, Award, User } from "lucide-react";
 import type { Voter } from "@/types/voter";
+
+// local helper (same logic as page)
+function calcAgeFromDOB(dobISO: string): number | null {
+  const parts = dobISO?.split("-").map((x) => Number(x));
+  if (!parts || parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
+  const [y, m, d] = parts;
+  const dob = new Date(Date.UTC(y, m - 1, d));
+  if (Number.isNaN(dob.getTime())) return null;
+
+  const now = new Date();
+  const ny = now.getUTCFullYear();
+  const nm = now.getUTCMonth();
+  const nd = now.getUTCDate();
+
+  let age = ny - y;
+  if (nm < m - 1 || (nm === m - 1 && nd < d)) age -= 1;
+  return age >= 0 && age < 150 ? age : null;
+}
 
 export default function DetailsCard({
   voter,
@@ -12,13 +29,13 @@ export default function DetailsCard({
   onSaveContacts,
 }: {
   voter: Voter;
-  edit: boolean; // page-level toggle (admins only)
+  edit: boolean;
   setField: <K extends keyof Voter>(k: K, v: Voter[K]) => void;
   isAdmin: boolean;
-  onSaveContacts: (mobile1?: string, mobile2?: string) => Promise<void> | void; // for non-admin, save on blur
+  onSaveContacts: (mobile1?: string, mobile2?: string) => Promise<void> | void;
 }) {
-  // Admins can edit when `edit` is true. Non-admins: only mobile fields editable.
   const canEdit = isAdmin && edit;
+  const displayAge = voter.age ?? (voter.dob ? calcAgeFromDOB(voter.dob) : null) ?? "";
 
   const commonInputCls =
     "w-full px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none disabled:bg-slate-50 disabled:text-slate-500 transition-all";
@@ -52,19 +69,27 @@ export default function DetailsCard({
               <input
                 value={voter.voterId || ""}
                 disabled={!canEdit}
-                onChange={(e) => {
-                  const upper = e.target.value.toUpperCase();
-                  setField("voterId", upper as any);
-                }}
+                onChange={(e) => setField("voterId", e.target.value.toUpperCase() as any)}
                 className={commonInputCls}
               />
             </div>
 
-            {/* Age (editable) */}
+            {/* Father Name */}
+            <div className="lg:col-span-2">
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Father&apos;s Name</label>
+              <input
+                value={voter.fatherName || ""}
+                disabled={!canEdit}
+                onChange={(e) => setField("fatherName", e.target.value)}
+                className={commonInputCls}
+              />
+            </div>
+
+            {/* Age */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Age</label>
               <input
-                value={voter.age ?? ""}
+                value={displayAge}
                 disabled={!canEdit}
                 inputMode="numeric"
                 onChange={(e) => {
@@ -75,6 +100,7 @@ export default function DetailsCard({
               />
             </div>
 
+            {/* Gender */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Gender</label>
               <select
@@ -90,7 +116,7 @@ export default function DetailsCard({
               </select>
             </div>
 
-            {/* DOB (no auto-age sync) */}
+            {/* DOB */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Date of Birth</label>
               <input
@@ -115,30 +141,30 @@ export default function DetailsCard({
         </div>
       </div>
 
-      {/* Booth Details */}
+      {/* Booth / Ward Details */}
       <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
         <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-4 border-b border-slate-200">
           <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <Building2 size={20} className="text-[#EF3340]" />
-            Booth Details
+            Booth & Ward Details
           </h3>
         </div>
         <div className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
             {([
-              ["boothName", "Booth Name"],
-              ["boothNo", "Booth No."],
-              ["partNo", "Part No."],
-              ["srn", "SRN"],
-            ] as const).map(([key, label]) => (
+              ["boothName", "Booth Name", "text"],
+              ["boothNo", "Booth No.", "numeric"],
+              ["partNo", "Part No.", "numeric"],
+              ["srn", "SRN", "numeric"],
+            ] as const).map(([key, label, mode]) => (
               <div key={key}>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">{label}</label>
                 <input
                   value={(voter as any)[key] ?? ""}
                   disabled={!canEdit}
-                  inputMode={key === "boothName" ? "text" : "numeric"}
+                  inputMode={mode === "text" ? "text" : "numeric"}
                   onChange={(e) => {
-                    if (key === "boothName") {
+                    if (mode === "text") {
                       setField(key as any, e.target.value);
                     } else {
                       const onlyDigits = e.target.value.replace(/\D/g, "");
@@ -149,13 +175,28 @@ export default function DetailsCard({
                 />
               </div>
             ))}
+
+            {/* Ward No */}
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Ward No.</label>
+              <input
+                value={voter.wardNo ?? ""}
+                disabled={!canEdit}
+                inputMode="numeric"
+                onChange={(e) => {
+                  const onlyDigits = e.target.value.replace(/\D/g, "");
+                  setField("wardNo", (onlyDigits ? Number(onlyDigits) : null) as any);
+                }}
+                className={commonInputCls}
+              />
+            </div>
           </div>
         </div>
       </div>
 
       {/* Contact */}
       <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-        <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-4 border-b border-slate-200">
+        <div className="bg-gradient-to-r from-slate-50 to white px-6 py-4 border-b border-slate-200">
           <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <Phone size={20} className="text-[#EF3340]" />
             Contact Information
@@ -169,9 +210,7 @@ export default function DetailsCard({
                 value={voter.mobile1 || ""}
                 disabled={isAdmin ? !canEdit : false}
                 onChange={(e) => setField("mobile1", e.target.value)}
-                onBlur={() => {
-                  if (!isAdmin) onSaveContacts();
-                }}
+                onBlur={() => { if (!isAdmin) onSaveContacts(); }}
                 className={commonInputCls}
               />
             </div>
@@ -181,9 +220,7 @@ export default function DetailsCard({
                 value={voter.mobile2 || ""}
                 disabled={isAdmin ? !canEdit : false}
                 onChange={(e) => setField("mobile2", e.target.value)}
-                onBlur={() => {
-                  if (!isAdmin) onSaveContacts();
-                }}
+                onBlur={() => { if (!isAdmin) onSaveContacts(); }}
                 className={commonInputCls}
               />
             </div>
@@ -216,8 +253,20 @@ export default function DetailsCard({
         </div>
         <div className="p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Party Support (NEW) */}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Voter's Side</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Party Support</label>
+              <input
+                value={voter.partySupport || ""}
+                disabled={!canEdit}
+                onChange={(e) => setField("partySupport", e.target.value)}
+                placeholder="e.g., INC / BJP / BSP / Independent / Neutral"
+                className={commonInputCls}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Voter&apos;s Side</label>
               <select
                 value={voter.colourCode}
                 disabled={!canEdit}
@@ -230,7 +279,8 @@ export default function DetailsCard({
                 <option value="OTHER">Other</option>
               </select>
             </div>
-            <div className="flex items-end gap-6">
+
+            <div className="md:col-span-2 flex items-end gap-6">
               {(["voted", "starVoter", "dead"] as const).map((flag) => (
                 <label key={flag} className="flex items-center gap-3 cursor-pointer group">
                   <input

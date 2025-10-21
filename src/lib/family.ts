@@ -1,5 +1,6 @@
 // src/lib/family.ts
 import { prisma } from "@/lib/prisma";
+import { FamilyRole } from "@prisma/client";
 
 /**
  * With the new schema, "family" is defined by a shared Voter.familyId (string).
@@ -10,9 +11,6 @@ import { prisma } from "@/lib/prisma";
  *      * Ensures head.headId = null
  *      * Ensures every non-head member has headId = head.id
  *      * If a non-head is incorrectly marked HEAD, demote to OTHER (so only one HEAD remains)
- *
- * NOTE: There is intentionally NO kin-edge table anymore.
- *       Family pages should list members by same familyId.
  */
 export async function rebuildFamilyGraph(familyId: string) {
   if (!familyId) return;
@@ -25,13 +23,10 @@ export async function rebuildFamilyGraph(familyId: string) {
 
   if (members.length === 0) return;
 
-  // Choose the first declared HEAD (if multiple, we'll keep the earliest and demote others)
-  const declaredHeads = members.filter(m => m.relationToHead === "HEAD");
+  // Choose the first declared HEAD (if multiple, keep the earliest and demote others)
+  const declaredHeads = members.filter(m => m.relationToHead === FamilyRole.HEAD);
   const head = declaredHeads[0] ?? null;
-  if (!head) {
-    // No head set; nothing to normalize (familyId still groups them together)
-    return;
-  }
+  if (!head) return; // no head set; nothing to normalize
 
   const tx: any[] = [];
 
@@ -49,8 +44,8 @@ export async function rebuildFamilyGraph(familyId: string) {
     }
 
     // If any other member is marked HEAD, demote to OTHER to keep a single HEAD
-    if (m.relationToHead === "HEAD") {
-      tx.push(prisma.voter.update({ where: { id: m.id }, data: { relationToHead: "OTHER" as any } }));
+    if (m.relationToHead === FamilyRole.HEAD) {
+      tx.push(prisma.voter.update({ where: { id: m.id }, data: { relationToHead: FamilyRole.OTHER } }));
     }
   }
 
@@ -59,17 +54,18 @@ export async function rebuildFamilyGraph(familyId: string) {
   }
 }
 
-/**
- * Convenience fetcher for a voter's family group (same familyId).
- * Returns the head (if present) and an ordered list of members.
- */
+/** Convenience fetcher for a voter's family group (same familyId). */
 export async function getFamilyByVoterId(voterId: bigint) {
   const me = await prisma.voter.findUnique({
     where: { id: voterId },
     select: { id: true, name: true, familyId: true, relationToHead: true, headId: true },
   });
   if (!me?.familyId) {
-    return { familyId: null, head: null, members: [] as { id: bigint; name: string | null; relationToHead: string | null; headId: bigint | null }[] };
+    return {
+      familyId: null,
+      head: null,
+      members: [] as { id: bigint; name: string | null; relationToHead: FamilyRole | null; headId: bigint | null }[],
+    };
   }
 
   const members = await prisma.voter.findMany({
@@ -80,7 +76,7 @@ export async function getFamilyByVoterId(voterId: bigint) {
 
   // Find current head (prefer explicit HEAD, otherwise anyone whose id matches others' headId)
   const head =
-    members.find(m => m.relationToHead === "HEAD") ??
+    members.find(m => m.relationToHead === FamilyRole.HEAD) ??
     (members.length
       ? (() => {
           const headIds = new Set(members.filter(m => m.headId).map(m => m.headId!.toString()));

@@ -36,6 +36,42 @@ function calcAgeFromDOB(dobISO: string): number | null {
   return age >= 0 && age < 150 ? age : null;
 }
 
+// Resolve a "Head" reference that can be either an internal numeric id (digits)
+// or an EPIC (alphanumeric). Returns the internal numeric id or null.
+async function resolveHeadToNumericId(input: string): Promise<number | null> {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  // digits-only? already an internal id
+  if (/^\d+$/.test(trimmed)) return Number(trimmed);
+
+  // otherwise try to resolve by EPIC (voterId)
+  try {
+    const usp = new URLSearchParams({ q: trimmed, limit: "5" });
+    const r = await fetch(`/api/voters?${usp.toString()}`, { cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !Array.isArray(j.items)) return null;
+
+    // Prefer exact voterId (case-insensitive)
+    const exact = j.items.find(
+      (m: any) => (m?.voterId || "").toString().toUpperCase() === trimmed.toUpperCase()
+    );
+    if (exact?.id != null) return Number(exact.id);
+
+    // Fallback: match ignoring spaces
+    const normalized = trimmed.replace(/\s+/g, "").toUpperCase();
+    const loose = j.items.find(
+      (m: any) => (m?.voterId || "").toString().replace(/\s+/g, "").toUpperCase() === normalized
+    );
+    if (loose?.id != null) return Number(loose.id);
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default function VoterPage() {
   const { id } = useParams<{ id: string }>();
   const { isAdmin } = useMe();
@@ -104,6 +140,20 @@ export default function VoterPage() {
 
     setSavingDetails(true);
     try {
+      // resolve head as before...
+      let resolvedHeadId: number | null = null;
+      if (voter.relationToHead !== "HEAD") {
+        const rawHead = (voter.headId ?? "").toString().trim();
+        if (rawHead) {
+          resolvedHeadId = await resolveHeadToNumericId(rawHead);
+          if (resolvedHeadId == null) {
+            setSavingDetails(false);
+            toast.error("Invalid Head reference", { description: "We couldn’t find a voter matching the Head ID/EPIC you entered. Please check and try again." });
+            return;
+          }
+        }
+      }
+
       const payload = {
         name: voter.name?.trim(),
         voterId: voter.voterId?.trim() || null,
@@ -125,11 +175,16 @@ export default function VoterPage() {
         dead: !!voter.dead,
         dob: voter.dob || null,
 
-        // family fields
+        // NEW
+        fatherName: voter.fatherName?.trim() || null,
+        wardNo: voter.wardNo ?? null,
+        partySupport: voter.partySupport?.trim() || null,
+
+        // family
         familyId: voter.familyId?.trim() || null,
         familyIdType: voter.familyIdType || null,
         relationToHead: voter.relationToHead || null,
-        headId: voter.relationToHead === "HEAD" ? null : voter.headId || null,
+        headId: voter.relationToHead === "HEAD" ? null : resolvedHeadId,
       };
 
       const r = await fetch(`/api/voters/${id}`, {
