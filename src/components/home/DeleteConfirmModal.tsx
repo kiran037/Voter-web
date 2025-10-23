@@ -28,39 +28,44 @@ export default function DeleteConfirmModal({
   }, [id, ids]);
 
   async function doDelete() {
-    if (targets.length === 0) return;
-    setDeleting(true);
-    setErr(null);
-    const t = toast.loading(
-      targets.length === 1 ? "Deleting voter..." : `Deleting ${targets.length} voters...`
-    );
-    try {
-      let failed = 0;
-      for (const vid of targets) {
-        const res = await fetch(`/api/voters/${vid}`, { method: "DELETE" });
-        if (!res.ok) failed++;
+  if (targets.length === 0) return;
+  setDeleting(true);
+  setErr(null);
+  const t = toast.loading(
+    targets.length === 1 ? "Deleting voter..." : `Deleting ${targets.length} voters...`
+  );
+  try {
+    if (targets.length === 1) {
+      const res = await fetch(`/api/voters/${targets[0]}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Delete failed");
+    } else {
+      const res = await fetch(`/api/voters/bulk-delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: targets }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || "Bulk delete failed");
       }
-      toast.dismiss(t);
-      if (failed === 0) {
-        toast.success(
-          targets.length === 1 ? "Voter deleted" : `Deleted ${targets.length} voters`
-        );
-        onClose();
-        await onDeleted();
-        // Let parent pages know they should refresh.
-        window.dispatchEvent(new CustomEvent("voters:refresh"));
-      } else {
-        setErr(`${failed} of ${targets.length} deletions failed`);
-        toast.error(`${failed} deletion(s) failed`);
-      }
-    } catch (e: any) {
-      setErr(e?.message || "Delete failed");
-      toast.dismiss(t);
-      toast.error(e?.message || "Delete failed");
-    } finally {
-      setDeleting(false);
     }
+
+    toast.dismiss(t);
+    toast.success(
+      targets.length === 1 ? "Voter deleted" : `Deleted ${targets.length} voters`
+    );
+    onClose();
+    await onDeleted();
+    window.dispatchEvent(new CustomEvent("voters:refresh"));
+  } catch (e: any) {
+    setErr(e?.message || "Delete failed");
+    toast.dismiss(t);
+    toast.error(e?.message || "Delete failed");
+  } finally {
+    setDeleting(false);
   }
+}
+
 
   const title =
     targets.length <= 1 ? "Delete Voter" : `Delete ${targets.length} Voters`;
