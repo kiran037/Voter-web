@@ -46,46 +46,35 @@ function parseCsv(buf: Buffer): StringRecord[] {
   return rows;
 }
 
+// --- XLSX deterministic import (prod-safe) ---
 type SheetJSLike = {
   read: (buf: Buffer, opts: { type: "buffer" }) => { SheetNames: string[]; Sheets: Record<string, unknown>; };
   utils: { sheet_to_json: (sheet: unknown, opts: { raw: boolean }) => Record<string, unknown>[]; };
 };
-function isSheetJSLike(mod: unknown): mod is SheetJSLike {
-  if (!mod || typeof mod !== "object") return false;
-  const m = mod as Record<string, unknown>;
-  const candidate = (("default" in m ? (m as { default: unknown }).default : mod) ?? mod) as Record<string, unknown>;
-  const read = (candidate as Record<string, unknown>).read;
-  const utils = (candidate as Record<string, unknown>).utils as Record<string, unknown> | undefined;
-  return typeof read === "function" && !!utils && typeof utils.sheet_to_json === "function";
-}
 function getDefaultIfPresent<T extends object>(mod: T | { default: T }): T {
   const anyMod = mod as unknown as { default?: T };
   return anyMod && anyMod.default ? anyMod.default : (mod as T);
 }
-async function loadSheetJS(): Promise<SheetJSLike | null> {
+async function loadSheetJS(): Promise<SheetJSLike> {
   try {
-    const m1 = await import("xlsx/xlsx.mjs");
-    const c1 = getDefaultIfPresent(m1 as unknown as object);
-    if (isSheetJSLike(c1)) return c1 as SheetJSLike;
-  } catch { }
-  try {
-    const m2 = await import("xlsx");
-    const c2 = getDefaultIfPresent(m2 as unknown as object);
-    if (isSheetJSLike(c2)) return c2 as SheetJSLike;
-  } catch { }
-  return null;
-}
-async function parseXlsx(buf: Buffer): Promise<UnknownRecord[]> {
-  const XLSX = await loadSheetJS();
-  if (!XLSX) {
-    const err = new Error("XLSX parser not available. Install `xlsx` and run on Node runtime.");
+    const m = await import("xlsx");
+    const xlsx = getDefaultIfPresent(m as unknown as object) as unknown as SheetJSLike;
+    if (!xlsx?.read || !xlsx?.utils?.sheet_to_json) throw new Error("Bad xlsx module");
+    return xlsx;
+  } catch (e) {
+    const err = new Error("XLSX parser not available. Ensure `xlsx` is installed and listed in next.config.ts serverExternalPackages.");
+    (err as { cause?: unknown }).cause = e;
     (err as { status?: number }).status = 400;
     throw err;
   }
+}
+async function parseXlsx(buf: Buffer): Promise<UnknownRecord[]> {
+  const XLSX = await loadSheetJS();
   const wb = XLSX.read(buf, { type: "buffer" });
   const sheetName = wb.SheetNames?.[0];
   if (!sheetName) return [];
   const sheet = wb.Sheets[sheetName];
+  // Keep formatted strings from Excel; users must provide dd-mm-yyyy strings
   return XLSX.utils.sheet_to_json(sheet, { raw: false });
 }
 
@@ -141,20 +130,21 @@ function toFamilyIdTypeEnum(input: string | null): FamilyIdType | null {
   };
   return map[v] ?? null;
 }
+
+// STRICT dd-mm-yyyy (no other string formats). No Excel serial support here.
 function parsePossibleDate(value: unknown): Date | null {
   if (value == null) return null;
-  const num = typeof value === "number" ? value : Number(String(value).trim());
-  if (Number.isFinite(num) && num > 59 && num < 60000) {
-    const base = new Date(Date.UTC(1899, 11, 30));
-    const ms = Math.round(num * 86400000);
-    const d = new Date(base.getTime() + ms);
-    return isNaN(d.getTime()) ? null : d;
-  }
   const s = String(value).trim();
   if (!s) return null;
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? null : d;
+  const m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (!m) return null;
+  const d = Number(m[1]);
+  const mo = Number(m[2]) - 1;
+  const y = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo, d));
+  return (dt.getUTCFullYear() === y && dt.getUTCMonth() === mo && dt.getUTCDate() === d) ? dt : null;
 }
+
 function toNumberOrNull(x: unknown): number | null {
   if (x == null || x === "") return null;
   const n = Number(x);
@@ -212,7 +202,7 @@ function mapRow(row: UnknownRecord) {
   const dobVal = pickInsensitive(row, ["dob", "date_of_birth"], "");
   const dob = parsePossibleDate(dobVal);
 
-  // ---- age rule: take provided age; ELSE if dob exists, compute; else null
+  // age: prefer provided number; else compute from dob
   const ageProvided = toNumberOrNull(pickInsensitive(row, ["age"], ""));
   const age = ageProvided ?? (dob ? calcAgeFromDate(dob) : null);
 
@@ -251,14 +241,13 @@ function mapRow(row: UnknownRecord) {
       colourCode, voted, starVoter, dead,
       boothNo, partNo, srn, houseNo, address, boothName,
       caste, profession, demands, extraInfo, dob,
-      age, // <-- the rule applied here
+      age,
       fatherName: fatherNameStr,
       partySupport: partySupportStr,
       wardNo,
       familyId: familyExternalId,
       familyIdType: familyIdType ?? null,
       relationToHead,
-      // headId resolved in phase 2
     },
     headRef,
     familyExternalId,
@@ -295,7 +284,7 @@ async function processImport({
   batchId,
   filename,
   buf,
-  uploaderId: _uploaderId, 
+  uploaderId: _uploaderId,
 }: {
   batchId: bigint;
   filename: string;
@@ -310,7 +299,8 @@ async function processImport({
   let rawRows: UnknownRecord[] = [];
   try {
     rawRows = /\.(xlsx|xlsm|xls)$/i.test(filename) ? await parseXlsx(buf) : parseCsv(buf);
-  } catch {
+  } catch (e) {
+    console.error("[import parse error]", e);
     await prisma.importBatch.update({ where: { id: batchId }, data: { status: "FAILED", completedAt: new Date() } });
     return;
   }
@@ -324,8 +314,8 @@ async function processImport({
 
   const mapped: Mapped[] = rawRows.map(mapRow);
 
-  const CHUNK = 200;
-  const CONCURRENCY = 8;
+  const CHUNK = Number(process.env.IMPORT_CHUNK_SIZE ?? 200);
+  const CONCURRENCY = Number(process.env.IMPORT_CONCURRENCY ?? 8);
   const runLimited = limiter(CONCURRENCY);
 
   let success = 0;
@@ -388,14 +378,13 @@ async function processImport({
             demands: m.voter.demands,
             extraInfo: m.voter.extraInfo,
             dob: m.voter.dob,
-            age: m.voter.age ?? null, // <-- persisted exactly as mapped (rule already applied)
+            age: m.voter.age ?? null,
             fatherName: m.voter.fatherName ?? null,
             partySupport: m.voter.partySupport ?? null,
             wardNo: m.voter.wardNo ?? null,
             familyId: m.voter.familyId ?? null,
             familyIdType: m.voter.familyIdType ?? null,
             relationToHead: m.voter.relationToHead ?? null,
-            // headId omitted in phase 1
           };
 
           let createdId: bigint;
@@ -465,7 +454,6 @@ async function processImport({
           targetHead =
             inBatchEpicToId.get(epic) ??
             (await (async () => {
-              // no "mode" here; emulate case-insensitivity by trying variants
               const found = await prisma.voter.findFirst({
                 where: { voterId: { in: [epic, epic.toLowerCase(), epic.toUpperCase()] } },
                 select: { id: true },
@@ -519,13 +507,28 @@ export async function POST(req: NextRequest) {
     select: { id: true },
   });
 
-  (async () => {
+  // Kick off the work after we return (avoids tying up the request thread)
+  setImmediate(async () => {
     try {
-      await processImport({ batchId: batch.id as unknown as bigint, filename, buf, uploaderId: (user.id as unknown as bigint) ?? null });
-    } catch {
-      await prisma.importBatch.update({ where: { id: batch.id as unknown as bigint }, data: { status: "FAILED", completedAt: new Date() } });
+      await processImport({
+        batchId: batch.id as unknown as bigint,
+        filename,
+        buf,
+        uploaderId: (user.id as unknown as bigint) ?? null,
+      });
+    } catch (e) {
+        await prisma.importBatch.update({
+          where: { id: batch.id as unknown as bigint },
+          data: { status: "FAILED", completedAt: new Date() },
+        });
+        console.error("[import worker crashed]", e);
     }
-  })();
+  });
 
-  return NextResponse.json({ batchId: (batch.id as unknown as bigint).toString(), queued: true });
+  // Respond immediately; client will poll /api/imports/[batchId]
+  return NextResponse.json({
+    batchId: (batch.id as unknown as bigint).toString(),
+    queued: true,
+    status: "PENDING",
+  });
 }
