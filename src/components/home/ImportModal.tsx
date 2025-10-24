@@ -162,12 +162,12 @@ export default function ImportModal({
       toast.dismiss(toastId);
 
       if (j.batchId) {
-  hasNotifiedRef.current = false;
-  setBatchId(String(j.batchId));
-  // start in PENDING; the poller will flip to PROCESSING/COMPLETED/FAILED
-  setStatus(j.status ?? "PENDING");
-  setImporting(false);
-} else {
+        hasNotifiedRef.current = false;
+        setBatchId(String(j.batchId));
+        // start in PENDING; the poller will flip to PROCESSING/COMPLETED/FAILED
+        setStatus(j.status ?? "PENDING");
+        setImporting(false);
+      } else {
 
         toast.success(`Imported: ${j.successCount} success, ${j.failedCount} failed out of ${j.rowCount}`);
         fileInput.value = "";
