@@ -5,13 +5,11 @@ import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/role";
 import { Buffer } from "node:buffer";
-import type { FamilyRole, ColourCode, FamilyIdType, Prisma } from "@prisma/client";
+import type { FamilyRole, ColourCode, FamilyIdType } from "@prisma/client";
 
 export const runtime = "nodejs";
-
-// --------- runtime mode switch (safe defaults for live) ----------
-const IS_VERCEL = process.env.VERCEL === "1";
-const BACKGROUND = process.env.IMPORT_BACKGROUND === "1" && !IS_VERCEL; // disable background on Vercel unless you move off or force it
+export const dynamic = "force-dynamic";
+export const maxDuration = 60; // give serverless a bit more time
 
 /* ========================= CSV/XLSX parsing ========================= */
 type UnknownRecord = Record<string, unknown>;
@@ -51,28 +49,41 @@ function parseCsv(buf: Buffer): StringRecord[] {
   return rows;
 }
 
-// --- XLSX deterministic import (prod-safe) ---
+// --- XLSX import with robust type-narrowing (avoids TS2774) ---
 type SheetJSLike = {
-  read: (buf: Buffer, opts: { type: "buffer" }) => { SheetNames: string[]; Sheets: Record<string, unknown>; };
-  utils: { sheet_to_json: (sheet: unknown, opts: { raw: boolean }) => Record<string, unknown>[]; };
+  read: (buf: Buffer, opts: { type: "buffer" }) => { SheetNames: string[]; Sheets: Record<string, unknown> };
+  utils: { sheet_to_json: (sheet: unknown, opts: { raw: boolean }) => Record<string, unknown>[] };
 };
+
 function getDefaultIfPresent<T extends object>(mod: T | { default: T }): T {
   const anyMod = mod as unknown as { default?: T };
   return anyMod && anyMod.default ? anyMod.default : (mod as T);
 }
-async function loadSheetJS(): Promise<SheetJSLike> {
-  const m = await import("xlsx"); // works with serverExternalPackages: ["xlsx"]
-  const xlsx = getDefaultIfPresent(m as unknown as object) as unknown as SheetJSLike;
-  if (!xlsx?.read || !xlsx?.utils?.sheet_to_json) throw new Error("Bad xlsx module");
-  return xlsx;
+function isSheetJSLike(mod: unknown): mod is SheetJSLike {
+  if (!mod || typeof mod !== "object") return false;
+  const candidate = getDefaultIfPresent(mod as Record<string, unknown>);
+  const read = (candidate as any)?.read;
+  const utils = (candidate as any)?.utils;
+  return typeof read === "function" && !!utils && typeof utils.sheet_to_json === "function";
 }
+// Try ESM first, then CJS — works across most hosts/bundlers
+async function loadSheetJS(): Promise<SheetJSLike> {
+  try {
+    const m1 = await import("xlsx/xlsx.mjs");
+    if (isSheetJSLike(m1)) return getDefaultIfPresent(m1 as any);
+  } catch {}
+  const m2 = await import("xlsx");
+  if (isSheetJSLike(m2)) return getDefaultIfPresent(m2 as any);
+  throw new Error("xlsx module not available");
+}
+
 async function parseXlsx(buf: Buffer): Promise<UnknownRecord[]> {
   const XLSX = await loadSheetJS();
   const wb = XLSX.read(buf, { type: "buffer" });
   const sheetName = wb.SheetNames?.[0];
   if (!sheetName) return [];
   const sheet = wb.Sheets[sheetName];
-  // Keep formatted strings from Excel
+  // keep formatted strings from Excel (e.g. "14-12-2001")
   return XLSX.utils.sheet_to_json(sheet, { raw: false });
 }
 
@@ -210,7 +221,7 @@ function mapRow(row: UnknownRecord) {
     (String(
       pickInsensitive(
         row,
-        ["familyId", "family", "janAadhaar", "jan_aadhaar", "rationCard", "ration_card", "family_code", "family_id"],
+      ["familyId", "family", "janAadhaar", "jan_aadhaar", "rationCard", "ration_card", "family_code", "family_id"],
         ""
       )
     ).trim() || null);
@@ -273,17 +284,17 @@ function limiter(max: number) {
     });
 }
 
-/* ========================= worker core (shared) ========================= */
-async function runImport(mapped: ReturnType<typeof mapRow>[]) {
+/* ========================= worker core (synchronous) ========================= */
+async function runImport(mapped: Mapped[]) {
   const CHUNK = Number(process.env.IMPORT_CHUNK_SIZE ?? 200);
-  const CONCURRENCY = Number(process.env.IMPORT_CONCURRENCY ?? 4); // a bit lower by default for prod safety
+  const CONCURRENCY = Number(process.env.IMPORT_CONCURRENCY ?? 6);
   const runLimited = limiter(CONCURRENCY);
 
   let success = 0;
   let failed = 0;
 
   const inBatchEpicToId = new Map<string, bigint>();
-  const createdRowsPhase1: Array<{ createdId: bigint; data: ReturnType<typeof mapRow> }> = [];
+  const createdRowsPhase1: Array<{ createdId: bigint; data: Mapped }> = [];
 
   // Phase 1 — upsert voters (without headId)
   for (let i = 0; i < mapped.length; i += CHUNK) {
@@ -366,8 +377,9 @@ async function runImport(mapped: ReturnType<typeof mapRow>[]) {
   }
 
   // Phase 2 — resolve head references
-  for (let i = 0; i < createdRowsPhase1.length; i += Number(process.env.IMPORT_CHUNK_SIZE ?? 200)) {
-    const slice = createdRowsPhase1.slice(i, i + Number(process.env.IMPORT_CHUNK_SIZE ?? 200));
+  const CH2 = Number(process.env.IMPORT_CHUNK_SIZE ?? 200);
+  for (let i = 0; i < createdRowsPhase1.length; i += CH2) {
+    const slice = createdRowsPhase1.slice(i, i + CH2);
     await Promise.all(
       slice.map(async ({ createdId, data }) => {
         const role = data.voter.relationToHead;
@@ -396,9 +408,7 @@ async function runImport(mapped: ReturnType<typeof mapRow>[]) {
         if (!targetHead || targetHead === createdId) return;
         try {
           await prisma.voter.update({ where: { id: createdId }, data: { headId: targetHead } });
-        } catch {
-          /* ignore bad references */
-        }
+        } catch { /* ignore */ }
       })
     );
   }
@@ -406,7 +416,6 @@ async function runImport(mapped: ReturnType<typeof mapRow>[]) {
   return { rowCount: mapped.length, successCount: success, failedCount: failed };
 }
 
-/* ========================= wrappers ========================= */
 async function processBuffer(filename: string, buf: Buffer) {
   const rawRows: UnknownRecord[] = /\.(xlsx|xlsm|xls)$/i.test(filename)
     ? await parseXlsx(buf)
@@ -416,7 +425,7 @@ async function processBuffer(filename: string, buf: Buffer) {
   return runImport(mapped);
 }
 
-/* ========================= route ========================= */
+/* ========================= route (SYNC ONLY) ========================= */
 export async function POST(req: NextRequest) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -431,55 +440,11 @@ export async function POST(req: NextRequest) {
   const filename = file.name || "upload";
   const buf = Buffer.from(await file.arrayBuffer());
 
-  // If background is disabled (default on Vercel), run synchronously and return counts.
-  if (!BACKGROUND) {
-    try {
-      const result = await processBuffer(filename, buf);
-      return NextResponse.json(result); // no batchId -> your UI will show toast and close
-    } catch (e: any) {
-      return NextResponse.json({ error: e?.message || "Import failed" }, { status: 500 });
-    }
+  try {
+    const result = await processBuffer(filename, buf);
+    // Your ImportModal already handles the "no batchId" case by toasting success
+    return NextResponse.json(result);
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || "Import failed" }, { status: 500 });
   }
-
-  // Background path (self-host or explicitly enabled)
-  const batch = await prisma.importBatch.create({
-    data: {
-      fileName: filename,
-      status: "PENDING",
-      uploadedById: (user.id as unknown as bigint) ?? null,
-      rowCount: 0, successCount: 0, failedCount: 0,
-    },
-    select: { id: true },
-  });
-
-  // fire-and-forget (won't run on Vercel unless you set IMPORT_BACKGROUND=1 and run on Node server)
-  setImmediate(async () => {
-    try {
-      await prisma.importBatch.update({ where: { id: batch.id as unknown as bigint }, data: { status: "PROCESSING", startedAt: new Date() } });
-      const res = await processBuffer(filename, buf);
-      await prisma.importBatch.update({
-        where: { id: batch.id as unknown as bigint },
-        data: {
-          status: "COMPLETED",
-          rowCount: res.rowCount,
-          successCount: res.successCount,
-          failedCount: res.failedCount,
-          completedAt: new Date(),
-        },
-      });
-    } catch (e) {
-      await prisma.importBatch.update({
-        where: { id: batch.id as unknown as bigint },
-        data: { status: "FAILED", completedAt: new Date() },
-      });
-      // eslint-disable-next-line no-console
-      console.error("[import worker crashed]", e);
-    }
-  });
-
-  return NextResponse.json({
-    batchId: (batch.id as unknown as bigint).toString(),
-    queued: true,
-    status: "PENDING",
-  });
 }
