@@ -10,7 +10,7 @@ import AddVoterModal from "@/components/home/AddVoterModal";
 import ImportModal from "@/components/home/ImportModal";
 import DeleteConfirmModal from "@/components/home/DeleteConfirmModal";
 
-const LIMIT = 50;
+const LIMIT = 500;
 
 export default function HomeClient() {
   const router = useRouter();
