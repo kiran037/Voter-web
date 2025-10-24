@@ -5,9 +5,13 @@ import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/role";
 import { Buffer } from "node:buffer";
-import type { Prisma, FamilyRole, ColourCode, FamilyIdType } from "@prisma/client";
+import type { FamilyRole, ColourCode, FamilyIdType, Prisma } from "@prisma/client";
 
 export const runtime = "nodejs";
+
+// --------- runtime mode switch (safe defaults for live) ----------
+const IS_VERCEL = process.env.VERCEL === "1";
+const BACKGROUND = process.env.IMPORT_BACKGROUND === "1" && !IS_VERCEL; // disable background on Vercel unless you move off or force it
 
 /* ========================= CSV/XLSX parsing ========================= */
 type UnknownRecord = Record<string, unknown>;
@@ -31,6 +35,7 @@ function escCsvSplit(line: string): string[] {
   out.push(cur);
   return out;
 }
+
 function parseCsv(buf: Buffer): StringRecord[] {
   const text = buf.toString("utf8").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = text.split("\n").filter(l => l.trim().length > 0);
@@ -56,17 +61,10 @@ function getDefaultIfPresent<T extends object>(mod: T | { default: T }): T {
   return anyMod && anyMod.default ? anyMod.default : (mod as T);
 }
 async function loadSheetJS(): Promise<SheetJSLike> {
-  try {
-    const m = await import("xlsx");
-    const xlsx = getDefaultIfPresent(m as unknown as object) as unknown as SheetJSLike;
-    if (!xlsx?.read || !xlsx?.utils?.sheet_to_json) throw new Error("Bad xlsx module");
-    return xlsx;
-  } catch (e) {
-    const err = new Error("XLSX parser not available. Ensure `xlsx` is installed and listed in next.config.ts serverExternalPackages.");
-    (err as { cause?: unknown }).cause = e;
-    (err as { status?: number }).status = 400;
-    throw err;
-  }
+  const m = await import("xlsx"); // works with serverExternalPackages: ["xlsx"]
+  const xlsx = getDefaultIfPresent(m as unknown as object) as unknown as SheetJSLike;
+  if (!xlsx?.read || !xlsx?.utils?.sheet_to_json) throw new Error("Bad xlsx module");
+  return xlsx;
 }
 async function parseXlsx(buf: Buffer): Promise<UnknownRecord[]> {
   const XLSX = await loadSheetJS();
@@ -74,7 +72,7 @@ async function parseXlsx(buf: Buffer): Promise<UnknownRecord[]> {
   const sheetName = wb.SheetNames?.[0];
   if (!sheetName) return [];
   const sheet = wb.Sheets[sheetName];
-  // Keep formatted strings from Excel; users must provide dd-mm-yyyy strings
+  // Keep formatted strings from Excel
   return XLSX.utils.sheet_to_json(sheet, { raw: false });
 }
 
@@ -131,7 +129,7 @@ function toFamilyIdTypeEnum(input: string | null): FamilyIdType | null {
   return map[v] ?? null;
 }
 
-// STRICT dd-mm-yyyy (no other string formats). No Excel serial support here.
+// STRICT dd-mm-yyyy only
 function parsePossibleDate(value: unknown): Date | null {
   if (value == null) return null;
   const s = String(value).trim();
@@ -156,8 +154,6 @@ function toBigIntOrNull(x: unknown): bigint | null {
   if (!/^\d+$/.test(s)) return null;
   try { return BigInt(s); } catch { return null; }
 }
-
-// --- age helpers ---
 function calcAgeFromDate(d: Date): number | null {
   const y = d.getUTCFullYear(), m = d.getUTCMonth(), day = d.getUTCDate();
   const now = new Date();
@@ -202,7 +198,6 @@ function mapRow(row: UnknownRecord) {
   const dobVal = pickInsensitive(row, ["dob", "date_of_birth"], "");
   const dob = parsePossibleDate(dobVal);
 
-  // age: prefer provided number; else compute from dob
   const ageProvided = toNumberOrNull(pickInsensitive(row, ["age"], ""));
   const age = ageProvided ?? (dob ? calcAgeFromDate(dob) : null);
 
@@ -226,7 +221,6 @@ function mapRow(row: UnknownRecord) {
   const relationRaw = (String(pickInsensitive(row, ["relationToHead", "role"], "")).trim() || null);
   const relationToHead = toFamilyRoleEnum(relationRaw);
 
-  // Head can be numeric id (internal) OR EPIC
   const headIdCell = String(pickInsensitive(row, ["headId", "head_id"], "")).trim();
   const headEpicCell = String(pickInsensitive(row, ["headEpic", "head_epic"], "")).trim();
   const headIdNumeric = toBigIntOrNull(headIdCell);
@@ -279,82 +273,27 @@ function limiter(max: number) {
     });
 }
 
-/* ========================= worker ========================= */
-async function processImport({
-  batchId,
-  filename,
-  buf,
-  uploaderId: _uploaderId,
-}: {
-  batchId: bigint;
-  filename: string;
-  buf: Buffer;
-  uploaderId: bigint | null;
-}) {
-
-  const startedAt = new Date();
-  await prisma.importBatch.update({ where: { id: batchId }, data: { status: "PROCESSING", startedAt } });
-
-  // Parse
-  let rawRows: UnknownRecord[] = [];
-  try {
-    rawRows = /\.(xlsx|xlsm|xls)$/i.test(filename) ? await parseXlsx(buf) : parseCsv(buf);
-  } catch (e) {
-    console.error("[import parse error]", e);
-    await prisma.importBatch.update({ where: { id: batchId }, data: { status: "FAILED", completedAt: new Date() } });
-    return;
-  }
-
-  const total = rawRows.length;
-  await prisma.importBatch.update({ where: { id: batchId }, data: { rowCount: total } });
-  if (total === 0) {
-    await prisma.importBatch.update({ where: { id: batchId }, data: { status: "COMPLETED", completedAt: new Date() } });
-    return;
-  }
-
-  const mapped: Mapped[] = rawRows.map(mapRow);
-
+/* ========================= worker core (shared) ========================= */
+async function runImport(mapped: ReturnType<typeof mapRow>[]) {
   const CHUNK = Number(process.env.IMPORT_CHUNK_SIZE ?? 200);
-  const CONCURRENCY = Number(process.env.IMPORT_CONCURRENCY ?? 8);
+  const CONCURRENCY = Number(process.env.IMPORT_CONCURRENCY ?? 4); // a bit lower by default for prod safety
   const runLimited = limiter(CONCURRENCY);
 
   let success = 0;
   let failed = 0;
 
-  // Phase 1 — upsert all voters (without headId), keep EPIC->id map
   const inBatchEpicToId = new Map<string, bigint>();
-  const createdRowsPhase1: Array<{ createdId: bigint; data: Mapped }> = [];
+  const createdRowsPhase1: Array<{ createdId: bigint; data: ReturnType<typeof mapRow> }> = [];
 
+  // Phase 1 — upsert voters (without headId)
   for (let i = 0; i < mapped.length; i += CHUNK) {
     const slice = mapped.slice(i, i + CHUNK);
 
-    const successRows: Prisma.ImportRowCreateManyInput[] = [];
-    const failedRows: Prisma.ImportRowCreateManyInput[] = [];
-
     const tasks = slice.map((m) =>
       runLimited(async () => {
-        const importRowBase = {
-          batchId,
-          status: "SKIPPED" as const,
-          raw: JSON.stringify(m),
-          voterIdStr: m.voter.voterId ?? null,
-          phone1: m.voter.mobile1 ?? null,
-          familyExternalId: m.familyExternalId ?? null,
-          familyIdType: m.familyIdType ?? null,
-          fatherNameStr: m.fatherNameStr ?? null,
-          partySupportStr: m.partySupportStr ?? null,
-          wardNoStr: m.wardNoStr ?? null,
-          voterId: null as bigint | null,
-          error: null as string | null,
-          createdAt: new Date(),
-        };
-
-        if (!m.voter.name) {
-          failedRows.push({ ...importRowBase, status: "SKIPPED", error: "Missing required field: name" });
-          return;
-        }
-
         try {
+          if (!m.voter.name) throw new Error("Missing required field: name");
+
           const baseData = {
             name: m.voter.name,
             voterId: m.voter.voterId ?? null,
@@ -369,7 +308,7 @@ async function processImport({
             mobile2: m.voter.mobile2,
             email: m.voter.email,
             gender: (m.voter.gender ?? null) as any,
-            colourCode: m.voter.colourCode,
+            colourCode: m.voter.colourCode as ColourCode,
             voted: m.voter.voted,
             starVoter: m.voter.starVoter,
             dead: m.voter.dead,
@@ -399,7 +338,10 @@ async function processImport({
             createdId = up.id as unknown as bigint;
           } else {
             const existing = m.voter.mobile1
-              ? await prisma.voter.findFirst({ where: { name: m.voter.name, mobile1: m.voter.mobile1 }, select: { id: true, voterId: true } })
+              ? await prisma.voter.findFirst({
+                  where: { name: m.voter.name, mobile1: m.voter.mobile1 },
+                  select: { id: true, voterId: true },
+                })
               : null;
 
             if (existing) {
@@ -407,35 +349,25 @@ async function processImport({
               createdId = existing.id as unknown as bigint;
             } else {
               const c = await prisma.voter.create({ data: baseData, select: { id: true, voterId: true } });
-              createdId = (c.id as unknown) as bigint;
+              createdId = c.id as unknown as bigint;
             }
           }
 
           if (m.voter.voterId) inBatchEpicToId.set(m.voter.voterId.toUpperCase(), createdId);
           createdRowsPhase1.push({ createdId, data: m });
-
-          successRows.push({ ...importRowBase, status: "SUCCESS", voterId: createdId });
-        } catch (e) {
-          let err = e instanceof Error ? e.message : "insert failed";
-          if ((e as { code?: string })?.code === "P2002") err = "duplicate (unique constraint)";
-          failedRows.push({ ...importRowBase, status: "FAILED", error: err.slice(0, 1024) });
+          success++;
+        } catch {
+          failed++;
         }
       })
     );
 
     await Promise.all(tasks);
-
-    if (successRows.length) { await prisma.importRow.createMany({ data: successRows }); success += successRows.length; }
-    if (failedRows.length) { await prisma.importRow.createMany({ data: failedRows }); failed += failedRows.length; }
-
-    await prisma.importBatch.update({ where: { id: batchId }, data: { successCount: success, failedCount: failed } });
-    await new Promise((r) => setTimeout(r, 0));
   }
 
-  // Phase 2 — resolve head references and update headId
-  for (let i = 0; i < createdRowsPhase1.length; i += CHUNK) {
-    const slice = createdRowsPhase1.slice(i, i + CHUNK);
-
+  // Phase 2 — resolve head references
+  for (let i = 0; i < createdRowsPhase1.length; i += Number(process.env.IMPORT_CHUNK_SIZE ?? 200)) {
+    const slice = createdRowsPhase1.slice(i, i + Number(process.env.IMPORT_CHUNK_SIZE ?? 200));
     await Promise.all(
       slice.map(async ({ createdId, data }) => {
         const role = data.voter.relationToHead;
@@ -444,7 +376,6 @@ async function processImport({
           await prisma.voter.update({ where: { id: createdId }, data: { headId: null } });
           return;
         }
-
         let targetHead: bigint | null = null;
 
         if (data.headRef.numeric) {
@@ -463,23 +394,26 @@ async function processImport({
         }
 
         if (!targetHead || targetHead === createdId) return;
-
         try {
-          await prisma.voter.update({
-            where: { id: createdId },
-            data: { headId: targetHead },
-          });
+          await prisma.voter.update({ where: { id: createdId }, data: { headId: targetHead } });
         } catch {
-          // ignore bad references in phase 2
+          /* ignore bad references */
         }
       })
     );
   }
 
-  await prisma.importBatch.update({
-    where: { id: batchId },
-    data: { status: "COMPLETED", completedAt: new Date() },
-  });
+  return { rowCount: mapped.length, successCount: success, failedCount: failed };
+}
+
+/* ========================= wrappers ========================= */
+async function processBuffer(filename: string, buf: Buffer) {
+  const rawRows: UnknownRecord[] = /\.(xlsx|xlsm|xls)$/i.test(filename)
+    ? await parseXlsx(buf)
+    : parseCsv(buf);
+  if (rawRows.length === 0) return { rowCount: 0, successCount: 0, failedCount: 0 };
+  const mapped = rawRows.map(mapRow);
+  return runImport(mapped);
 }
 
 /* ========================= route ========================= */
@@ -497,6 +431,17 @@ export async function POST(req: NextRequest) {
   const filename = file.name || "upload";
   const buf = Buffer.from(await file.arrayBuffer());
 
+  // If background is disabled (default on Vercel), run synchronously and return counts.
+  if (!BACKGROUND) {
+    try {
+      const result = await processBuffer(filename, buf);
+      return NextResponse.json(result); // no batchId -> your UI will show toast and close
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message || "Import failed" }, { status: 500 });
+    }
+  }
+
+  // Background path (self-host or explicitly enabled)
   const batch = await prisma.importBatch.create({
     data: {
       fileName: filename,
@@ -507,25 +452,31 @@ export async function POST(req: NextRequest) {
     select: { id: true },
   });
 
-  // Kick off the work after we return (avoids tying up the request thread)
+  // fire-and-forget (won't run on Vercel unless you set IMPORT_BACKGROUND=1 and run on Node server)
   setImmediate(async () => {
     try {
-      await processImport({
-        batchId: batch.id as unknown as bigint,
-        filename,
-        buf,
-        uploaderId: (user.id as unknown as bigint) ?? null,
+      await prisma.importBatch.update({ where: { id: batch.id as unknown as bigint }, data: { status: "PROCESSING", startedAt: new Date() } });
+      const res = await processBuffer(filename, buf);
+      await prisma.importBatch.update({
+        where: { id: batch.id as unknown as bigint },
+        data: {
+          status: "COMPLETED",
+          rowCount: res.rowCount,
+          successCount: res.successCount,
+          failedCount: res.failedCount,
+          completedAt: new Date(),
+        },
       });
     } catch (e) {
-        await prisma.importBatch.update({
-          where: { id: batch.id as unknown as bigint },
-          data: { status: "FAILED", completedAt: new Date() },
-        });
-        console.error("[import worker crashed]", e);
+      await prisma.importBatch.update({
+        where: { id: batch.id as unknown as bigint },
+        data: { status: "FAILED", completedAt: new Date() },
+      });
+      // eslint-disable-next-line no-console
+      console.error("[import worker crashed]", e);
     }
   });
 
-  // Respond immediately; client will poll /api/imports/[batchId]
   return NextResponse.json({
     batchId: (batch.id as unknown as bigint).toString(),
     queued: true,
