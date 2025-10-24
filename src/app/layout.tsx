@@ -9,8 +9,8 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Udaipur Voters",
-  description: "Nagar Nigam Udaipur",
+  title: "Apna Ward",
+  description: "Information hub for Apna Ward community.",
   // Note: themeColor belongs in `viewport` for Next 15+
 };
 

@@ -203,7 +203,7 @@ export default function Header() {
             <div className="relative w-8 h-8 float">
               <Image
                 src="/logo.png"
-                alt="Udaipur Voters"
+                alt="Apna Ward Logo"
                 fill
                 className="object-contain"
                 onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
@@ -211,7 +211,7 @@ export default function Header() {
               />
             </div>
             <span className="font-bold text-lg bg-gradient-to-r from-gray-900 via-[#3D3D3D] to-gray-900 bg-clip-text text-transparent truncate">
-              Udaipur Voters
+              Apna Ward
             </span>
           </Link>
 
