@@ -8,8 +8,8 @@ import { Buffer } from "node:buffer";
 import type { FamilyRole, ColourCode, FamilyIdType } from "@prisma/client";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-export const maxDuration = 60; // give serverless a bit more time
+export const dynamic = "force-dynamic";   // don't let Next statically optimize this route
+export const maxDuration = 60;            // give serverless a bit more time
 
 /* ========================= CSV/XLSX parsing ========================= */
 type UnknownRecord = Record<string, unknown>;
@@ -49,7 +49,7 @@ function parseCsv(buf: Buffer): StringRecord[] {
   return rows;
 }
 
-// --- XLSX import with robust type-narrowing (avoids TS2774) ---
+// --- XLSX import with robust type-narrowing (fixes TS2774 & works on mixed ESM/CJS hosts) ---
 type SheetJSLike = {
   read: (buf: Buffer, opts: { type: "buffer" }) => { SheetNames: string[]; Sheets: Record<string, unknown> };
   utils: { sheet_to_json: (sheet: unknown, opts: { raw: boolean }) => Record<string, unknown>[] };
@@ -66,12 +66,13 @@ function isSheetJSLike(mod: unknown): mod is SheetJSLike {
   const utils = (candidate as any)?.utils;
   return typeof read === "function" && !!utils && typeof utils.sheet_to_json === "function";
 }
-// Try ESM first, then CJS — works across most hosts/bundlers
 async function loadSheetJS(): Promise<SheetJSLike> {
   try {
+    // prefer the ESM entry when available
     const m1 = await import("xlsx/xlsx.mjs");
     if (isSheetJSLike(m1)) return getDefaultIfPresent(m1 as any);
   } catch {}
+  // fallback to the common CJS entry
   const m2 = await import("xlsx");
   if (isSheetJSLike(m2)) return getDefaultIfPresent(m2 as any);
   throw new Error("xlsx module not available");
@@ -175,8 +176,6 @@ function calcAgeFromDate(d: Date): number | null {
 }
 
 /* ========================= row mapping ========================= */
-type Mapped = ReturnType<typeof mapRow>;
-
 function mapRow(row: UnknownRecord) {
   const name = String(pickInsensitive(row, ["name", "full name", "voter_name"], "")).trim();
 
@@ -221,7 +220,7 @@ function mapRow(row: UnknownRecord) {
     (String(
       pickInsensitive(
         row,
-      ["familyId", "family", "janAadhaar", "jan_aadhaar", "rationCard", "ration_card", "family_code", "family_id"],
+        ["familyId", "family", "janAadhaar", "jan_aadhaar", "rationCard", "ration_card", "family_code", "family_id"],
         ""
       )
     ).trim() || null);
@@ -263,6 +262,9 @@ function mapRow(row: UnknownRecord) {
   };
 }
 
+// Use a unique alias to avoid duplicate-identifier clashes
+type ImportMapped = ReturnType<typeof mapRow>;
+
 /* ========================= tiny concurrency helper ========================= */
 function limiter(max: number) {
   let running = 0;
@@ -285,7 +287,7 @@ function limiter(max: number) {
 }
 
 /* ========================= worker core (synchronous) ========================= */
-async function runImport(mapped: Mapped[]) {
+async function runImport(mapped: ImportMapped[]) {
   const CHUNK = Number(process.env.IMPORT_CHUNK_SIZE ?? 200);
   const CONCURRENCY = Number(process.env.IMPORT_CONCURRENCY ?? 6);
   const runLimited = limiter(CONCURRENCY);
@@ -294,7 +296,7 @@ async function runImport(mapped: Mapped[]) {
   let failed = 0;
 
   const inBatchEpicToId = new Map<string, bigint>();
-  const createdRowsPhase1: Array<{ createdId: bigint; data: Mapped }> = [];
+  const createdRowsPhase1: Array<{ createdId: bigint; data: ImportMapped }> = [];
 
   // Phase 1 — upsert voters (without headId)
   for (let i = 0; i < mapped.length; i += CHUNK) {
@@ -442,7 +444,6 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await processBuffer(filename, buf);
-    // Your ImportModal already handles the "no batchId" case by toasting success
     return NextResponse.json(result);
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Import failed" }, { status: 500 });

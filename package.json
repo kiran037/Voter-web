@@ -2,6 +2,11 @@
   "name": "voter-web",
   "version": "0.1.0",
   "private": true,
+
+  "engines": {
+    "node": ">=18.18"
+  },
+  
   "packageManager": "npm@11.5.2",
   "scripts": {
     "dev": "next dev --turbopack",
