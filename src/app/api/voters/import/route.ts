@@ -8,6 +8,8 @@ import { Buffer } from "node:buffer";
 import type { Prisma, FamilyRole, ColourCode, FamilyIdType } from "@prisma/client";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /* ========================= CSV/XLSX parsing ========================= */
 type UnknownRecord = Record<string, unknown>;
@@ -156,8 +158,6 @@ function toBigIntOrNull(x: unknown): bigint | null {
   if (!/^\d+$/.test(s)) return null;
   try { return BigInt(s); } catch { return null; }
 }
-
-// --- age helpers ---
 function calcAgeFromDate(d: Date): number | null {
   const y = d.getUTCFullYear(), m = d.getUTCMonth(), day = d.getUTCDate();
   const now = new Date();
@@ -202,7 +202,6 @@ function mapRow(row: UnknownRecord) {
   const dobVal = pickInsensitive(row, ["dob", "date_of_birth"], "");
   const dob = parsePossibleDate(dobVal);
 
-  // age: prefer provided number; else compute from dob
   const ageProvided = toNumberOrNull(pickInsensitive(row, ["age"], ""));
   const age = ageProvided ?? (dob ? calcAgeFromDate(dob) : null);
 
@@ -226,7 +225,7 @@ function mapRow(row: UnknownRecord) {
   const relationRaw = (String(pickInsensitive(row, ["relationToHead", "role"], "")).trim() || null);
   const relationToHead = toFamilyRoleEnum(relationRaw);
 
-  // Head can be numeric id (internal) OR EPIC
+  // Head can be numeric id (internal) OR EPIC (headEpic)
   const headIdCell = String(pickInsensitive(row, ["headId", "head_id"], "")).trim();
   const headEpicCell = String(pickInsensitive(row, ["headEpic", "head_epic"], "")).trim();
   const headIdNumeric = toBigIntOrNull(headIdCell);
@@ -291,17 +290,15 @@ async function processImport({
   buf: Buffer;
   uploaderId: bigint | null;
 }) {
-
   const startedAt = new Date();
   await prisma.importBatch.update({ where: { id: batchId }, data: { status: "PROCESSING", startedAt } });
 
-  // Parse
   let rawRows: UnknownRecord[] = [];
   try {
     rawRows = /\.(xlsx|xlsm|xls)$/i.test(filename) ? await parseXlsx(buf) : parseCsv(buf);
   } catch (e) {
-    console.error("[import parse error]", e);
     await prisma.importBatch.update({ where: { id: batchId }, data: { status: "FAILED", completedAt: new Date() } });
+    console.error("[import parse error]", e);
     return;
   }
 
@@ -407,7 +404,7 @@ async function processImport({
               createdId = existing.id as unknown as bigint;
             } else {
               const c = await prisma.voter.create({ data: baseData, select: { id: true, voterId: true } });
-              createdId = (c.id as unknown) as bigint;
+              createdId = c.id as unknown as bigint;
             }
           }
 
@@ -482,7 +479,7 @@ async function processImport({
   });
 }
 
-/* ========================= route ========================= */
+/* ========================= route (vercel background-safe) ========================= */
 export async function POST(req: NextRequest) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -507,8 +504,17 @@ export async function POST(req: NextRequest) {
     select: { id: true },
   });
 
-  // Kick off the work after we return (avoids tying up the request thread)
-  setImmediate(async () => {
+  // Respond immediately so the client can start polling
+  const res = NextResponse.json({
+    batchId: String(batch.id),
+    queued: true,
+    status: "PENDING",
+  });
+  // Keep the function alive in the background on Vercel
+  res.headers.set("x-vercel-background", "1");
+
+  // Continue processing after sending the response
+  (async () => {
     try {
       await processImport({
         batchId: batch.id as unknown as bigint,
@@ -517,18 +523,13 @@ export async function POST(req: NextRequest) {
         uploaderId: (user.id as unknown as bigint) ?? null,
       });
     } catch (e) {
-        await prisma.importBatch.update({
-          where: { id: batch.id as unknown as bigint },
-          data: { status: "FAILED", completedAt: new Date() },
-        });
-        console.error("[import worker crashed]", e);
+      await prisma.importBatch.update({
+        where: { id: batch.id as unknown as bigint },
+        data: { status: "FAILED", completedAt: new Date() },
+      });
+      console.error("[import worker crashed]", e);
     }
-  });
+  })();
 
-  // Respond immediately; client will poll /api/imports/[batchId]
-  return NextResponse.json({
-    batchId: (batch.id as unknown as bigint).toString(),
-    queued: true,
-    status: "PENDING",
-  });
+  return res;
 }
