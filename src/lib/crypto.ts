@@ -1,4 +1,4 @@
-///Users/xeoren/voter-web/src/lib/crypto.ts
+// src/lib/crypto.ts
 import crypto from "crypto";
 
 export function sha256(input: string) {
@@ -6,9 +6,11 @@ export function sha256(input: string) {
 }
 
 export function randomNumericCode(len = 6) {
-  const digits = "0123456789";
+  // crypto-secure digits
   let out = "";
-  for (let i = 0; i < len; i++) out += digits[Math.floor(Math.random() * 10)];
+  for (let i = 0; i < len; i++) {
+    out += String(crypto.randomInt(0, 10));
+  }
   return out;
 }
 
