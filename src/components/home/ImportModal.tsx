@@ -2,17 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Modal from "./Modal";
-import { Clock, Info, Loader2, PauseCircle, PlayCircle, Upload } from "lucide-react";
+import { Clock, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 
-const DEFAULT_MAX_BYTES = 4_500_000;
+const DEFAULT_MAX_BYTES = 4_500_000; // ~4.5 MB Vercel body limit
 const MAX_BYTES =
-  typeof process !== "undefined" && process.env.NEXT_PUBLIC_IMPORT_MAX_UPLOAD_BYTES
+  typeof process !== "undefined" &&
+  process.env.NEXT_PUBLIC_IMPORT_MAX_UPLOAD_BYTES
     ? Number(process.env.NEXT_PUBLIC_IMPORT_MAX_UPLOAD_BYTES)
     : DEFAULT_MAX_BYTES;
-
-// UX: show “stuck” banner if no progress bump in this many seconds
-const STUCK_AFTER_SEC = 60;
 
 export default function ImportModal({
   open,
@@ -35,8 +33,6 @@ export default function ImportModal({
   // timers/guards
   const timerRef = useRef<number | null>(null);
   const pollerRef = useRef<number | null>(null);
-  const lastProgressRef = useRef<number>(0);
-  const lastProgressBumpAtRef = useRef<number>(0);
   const hasNotifiedRef = useRef(false);
 
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -47,6 +43,7 @@ export default function ImportModal({
       if (timerRef.current) window.clearInterval(timerRef.current);
       if (pollerRef.current) window.clearInterval(pollerRef.current);
       hasNotifiedRef.current = false;
+
       setImporting(false);
       setBatchId(null);
       setStatus(null);
@@ -56,20 +53,20 @@ export default function ImportModal({
       setStartedAt(null);
       setCompletedAt(null);
       setElapsedSec(0);
-      lastProgressRef.current = 0;
-      lastProgressBumpAtRef.current = 0;
     }
   }, [open]);
 
   // tick elapsed while processing
   useEffect(() => {
-    if ((status === "PROCESSING" || status === "PENDING") && startedAt) {
+    if (status === "PROCESSING" && startedAt) {
       if (timerRef.current) window.clearInterval(timerRef.current);
       const start = new Date(startedAt).getTime();
       const tick = () => setElapsedSec(Math.max(0, Math.floor((Date.now() - start) / 1000)));
       tick();
       timerRef.current = window.setInterval(tick, 1000);
-      return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
+      return () => {
+        if (timerRef.current) window.clearInterval(timerRef.current);
+      };
     } else {
       if (timerRef.current) window.clearInterval(timerRef.current);
     }
@@ -81,10 +78,9 @@ export default function ImportModal({
     return Math.max(0, Math.min(100, Math.round((processed / rowCount) * 100)));
   }, [processed, rowCount]);
 
-  // ETA shows only when we know rowCount and have non-zero speed
   const etaText = useMemo(() => {
     if (!rowCount || processed === 0 || elapsedSec < 2) return "—";
-    const rate = processed / Math.max(1, elapsedSec);
+    const rate = processed / elapsedSec;
     if (rate <= 0) return "—";
     const remaining = Math.max(0, rowCount - processed);
     const est = Math.ceil(remaining / rate);
@@ -93,18 +89,14 @@ export default function ImportModal({
     return m > 0 ? `${m}m ${s}s` : `${s}s`;
   }, [rowCount, processed, elapsedSec]);
 
-  const isStuck =
-    (status === "PROCESSING" || status === "PENDING") &&
-    lastProgressBumpAtRef.current > 0 &&
-    Date.now() - lastProgressBumpAtRef.current > STUCK_AFTER_SEC * 1000;
-
-  // Poll while working
+  // Poll while WORKING; stop in terminal states
   useEffect(() => {
     if (!batchId) return;
     if (status === "COMPLETED" || status === "FAILED") return;
     if (pollerRef.current) return;
 
     let cancelled = false;
+
     const poll = async () => {
       try {
         const r = await fetch(`/api/imports/${batchId}`, { cache: "no-store" });
@@ -117,13 +109,6 @@ export default function ImportModal({
         setFailedCount(j.failedCount || 0);
         setStartedAt(j.startedAt || null);
         setCompletedAt(j.completedAt || null);
-
-        // progress bump tracking
-        const newProcessed = (j.successCount || 0) + (j.failedCount || 0);
-        if (newProcessed !== lastProgressRef.current) {
-          lastProgressRef.current = newProcessed;
-          lastProgressBumpAtRef.current = Date.now();
-        }
 
         if (j.status === "COMPLETED" || j.status === "FAILED") {
           if (pollerRef.current) {
@@ -140,10 +125,11 @@ export default function ImportModal({
             }
           }
         }
-      } catch {}
+      } catch {
+        // ignore transient poll errors
+      }
     };
 
-    // quick first poll, then steady
     poll();
     pollerRef.current = window.setInterval(poll, 1500);
 
@@ -165,15 +151,16 @@ export default function ImportModal({
     }
     const file = fileInput.files[0];
 
+    // Client-side size guard for Vercel body limit
     if (typeof file.size === "number" && file.size > MAX_BYTES) {
       toast.error(
         `File too large for live upload (${(file.size / (1024 * 1024)).toFixed(2)} MB). ` +
-          `Split under ${(MAX_BYTES / (1024 * 1024)).toFixed(2)} MB or use offline importer.`
+          `Please split under ${(MAX_BYTES / (1024 * 1024)).toFixed(2)} MB or use the storage upload flow.`
       );
       return;
     }
 
-    const t = toast.loading("Uploading…");
+    const toastId = toast.loading("Uploading file…");
     setImporting(true);
     try {
       const fd = new FormData();
@@ -181,34 +168,42 @@ export default function ImportModal({
       const res = await fetch("/api/voters/import", { method: "POST", body: fd });
       const j = await res.json().catch(() => ({}));
 
-      toast.dismiss(t);
-
       if (!res.ok) {
-        if (res.status === 401) toast.error("You are not logged in.");
-        else if (res.status === 403) toast.error("Only admins can import.");
-        else if (res.status === 413) toast.error(j?.error || "File too large.");
-        else toast.error(j?.error || "Import failed");
+        toast.dismiss(toastId);
+        // Nice error messages per status
+        if (res.status === 401) {
+          toast.error("You are not logged in.");
+        } else if (res.status === 403) {
+          toast.error("Only admins can import.");
+        } else if (res.status === 413) {
+          toast.error(
+            j?.error ||
+              `File too large for live upload. Limit ~${(MAX_BYTES / (1024 * 1024)).toFixed(2)} MB.`
+          );
+        } else {
+          toast.error(j?.error || "Import failed");
+        }
         setImporting(false);
         return;
       }
 
+      toast.dismiss(toastId);
+
       if (j.batchId) {
-        // Switch to progress UI immediately
         hasNotifiedRef.current = false;
-        lastProgressRef.current = 0;
-        lastProgressBumpAtRef.current = Date.now();
         setBatchId(String(j.batchId));
+        // start in PENDING; the poller will flip to PROCESSING/COMPLETED/FAILED
         setStatus(j.status ?? "PENDING");
         setImporting(false);
       } else {
-        // (not expected with background route)
+        // (Synchronous import path – not expected here, but keep UX)
         toast.success(`Imported: ${j.successCount} success, ${j.failedCount} failed out of ${j.rowCount}`);
         fileInput.value = "";
         onClose();
         await onImported();
       }
     } catch (err: any) {
-      toast.dismiss(t);
+      toast.dismiss(toastId);
       toast.error(err?.message || "Import failed");
       setImporting(false);
     }
@@ -217,24 +212,33 @@ export default function ImportModal({
   return (
     <Modal open={open} onClose={onClose} title="Bulk Upload Voters">
       <form onSubmit={onImport} className="space-y-4">
-        {/* Upload panel */}
+        <div className="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center hover:border-[#EF3340]/50 transition-colors">
+          <Upload className="mx-auto text-slate-400 mb-3" size={40} />
+          <input
+            name="file"
+            type="file"
+            accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+            className="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#EF3340] file:text-white hover:file:bg-[#C82333] file:cursor-pointer"
+            disabled={!!batchId && (status === "PENDING" || status === "PROCESSING")}
+          />
+          <p className="text-xs text-slate-500 mt-2">
+            CSV or XLSX files accepted. Large files process in the background.
+            <br />
+            <span className="text-slate-400">
+              Max file size for live upload: {(MAX_BYTES / (1024 * 1024)).toFixed(2)} MB
+            </span>
+          </p>
+        </div>
+
         {!batchId && (
           <>
-            <div className="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center hover:border-[#EF3340]/50 transition-colors">
-              <Upload className="mx-auto text-slate-400 mb-3" size={40} />
-              <input
-                name="file"
-                type="file"
-                accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
-                className="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#EF3340] file:text-white hover:file:bg-[#C82333] file:cursor-pointer"
-                disabled={importing}
-              />
-              <p className="text-xs text-slate-500 mt-2">
-                CSV or XLSX. Large files process in the background.
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <p className="text-sm text-blue-800 font-medium mb-2">Accepted Headers:</p>
+              <p className="text-xs text-blue-700">
+                name, fatherName, <b>partySupport</b>, village, wardNo, voterId, phone/mobile, mobile2, colourCode, voted, starVoter, dead,
+                boothNo, partNo, srn, age, gender, address, email,
                 <br />
-                <span className="text-slate-400">
-                  Max live size: {(MAX_BYTES / (1024 * 1024)).toFixed(2)} MB
-                </span>
+                <b>familyId</b>, <b>familyIdType</b>, <b>relationToHead</b>, <b>headId</b>, extraInfo, caste, profession, demands, dob
               </p>
             </div>
 
@@ -244,7 +248,7 @@ export default function ImportModal({
                 disabled={importing}
                 className="px-6 py-3 bg-gradient-to-r from-[#EF3340] to-[#C82333] text-white rounded-xl font-semibold hover:shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all"
               >
-                {importing ? "Uploading…" : "Upload File"}
+                {importing ? "Uploading..." : "Upload File"}
               </button>
               <button
                 type="button"
@@ -254,49 +258,25 @@ export default function ImportModal({
                 Cancel
               </button>
             </div>
-
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-              <p className="text-sm text-blue-800 font-medium mb-2">Accepted Headers</p>
-              <p className="text-xs text-blue-700">
-                name, fatherName, <b>partySupport</b>, village, wardNo, voterId, phone/mobile, mobile2, colourCode, voted, starVoter, dead, boothNo, partNo, srn, age, gender, address, email,
-                <br />
-                <b>familyId</b>, <b>familyIdType</b>, <b>relationToHead</b>, <b>headId</b>, extraInfo, caste, profession, demands, dob
-              </p>
-            </div>
           </>
         )}
 
-        {/* Progress panel */}
         {batchId && (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
+            <div className="flex items-center gap-2 text-sm text-slate-700">
               {(status === "PENDING" || status === "PROCESSING") ? <Loader2 className="animate-spin" size={16} /> : null}
               <span>Batch</span>
               <code className="px-1.5 py-0.5 rounded bg-slate-100 border text-[11px]">{batchId}</code>
               <span className="ml-2">Status:</span>
               <span className="font-semibold">{status}</span>
-              {status === "PENDING" && <span className="text-slate-400">(initializing…)</span>}
             </div>
-
-            {/* Stuck hint */}
-            {isStuck && (
-              <div className="flex items-center gap-2 p-3 rounded-lg border bg-amber-50 border-amber-200 text-amber-900 text-sm">
-                <PauseCircle size={16} />
-                <span>
-                  Still working in the background. Keep this tab open; progress updates every few seconds.
-                </span>
-              </div>
-            )}
 
             <div className="rounded-xl border p-4 bg-slate-50">
               <div className="flex items-center justify-between text-sm mb-2">
                 <span>Progress</span>
-                <span className="tabular-nums">
-                  {rowCount ? `${successCount + failedCount}/${rowCount}` : `${successCount + failedCount}/?`} ({progress}%)
-                </span>
+                <span className="tabular-nums">{processed}/{rowCount || "?"} ({progress}%)</span>
               </div>
-
-              <div className="w-full h-3 bg-white border rounded-full overflow-hidden">
+              <div className="W-full h-3 bg-white border rounded-full overflow-hidden">
                 <div
                   className="h-full bg-gradient-to-r from-[#EF3340] to-[#C82333] transition-all"
                   style={{ width: `${progress}%` }}
@@ -308,20 +288,15 @@ export default function ImportModal({
                 <div>❌ Failed: <span className="font-semibold tabular-nums">{failedCount}</span></div>
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-700">
+              <div className="mt-3 flex items-center gap-2 text-sm text-slate-700">
                 <Clock size={16} />
                 <span>Elapsed:</span>
-                <span className="font-semibold tabular-nums">{Math.floor(elapsedSec / 60)}m {elapsedSec % 60}s</span>
+                <span className="font-semibold tabular-nums">
+                  {Math.floor(elapsedSec / 60)}m {elapsedSec % 60}s
+                </span>
                 <span className="mx-2">•</span>
                 <span>ETA:</span>
                 <span className="font-semibold tabular-nums">{etaText}</span>
-                {!rowCount && (
-                  <>
-                    <span className="mx-2">•</span>
-                    <Info size={16} />
-                    <span>Counting rows… progress will start once parsing finishes</span>
-                  </>
-                )}
               </div>
             </div>
 
