@@ -5,6 +5,13 @@ import Modal from "./Modal";
 import { Clock, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 
+const DEFAULT_MAX_BYTES = 4_500_000; // ~4.5 MB Vercel body limit
+const MAX_BYTES =
+  typeof process !== "undefined" &&
+  process.env.NEXT_PUBLIC_IMPORT_MAX_UPLOAD_BYTES
+    ? Number(process.env.NEXT_PUBLIC_IMPORT_MAX_UPLOAD_BYTES)
+    : DEFAULT_MAX_BYTES;
+
 export default function ImportModal({
   open,
   onClose,
@@ -144,6 +151,15 @@ export default function ImportModal({
     }
     const file = fileInput.files[0];
 
+    // Client-side size guard for Vercel body limit
+    if (typeof file.size === "number" && file.size > MAX_BYTES) {
+      toast.error(
+        `File too large for live upload (${(file.size / (1024 * 1024)).toFixed(2)} MB). ` +
+          `Please split under ${(MAX_BYTES / (1024 * 1024)).toFixed(2)} MB or use the storage upload flow.`
+      );
+      return;
+    }
+
     const toastId = toast.loading("Uploading file…");
     setImporting(true);
     try {
@@ -154,7 +170,19 @@ export default function ImportModal({
 
       if (!res.ok) {
         toast.dismiss(toastId);
-        toast.error(j.error || "Import failed");
+        // Nice error messages per status
+        if (res.status === 401) {
+          toast.error("You are not logged in.");
+        } else if (res.status === 403) {
+          toast.error("Only admins can import.");
+        } else if (res.status === 413) {
+          toast.error(
+            j?.error ||
+              `File too large for live upload. Limit ~${(MAX_BYTES / (1024 * 1024)).toFixed(2)} MB.`
+          );
+        } else {
+          toast.error(j?.error || "Import failed");
+        }
         setImporting(false);
         return;
       }
@@ -168,7 +196,7 @@ export default function ImportModal({
         setStatus(j.status ?? "PENDING");
         setImporting(false);
       } else {
-
+        // (Synchronous import path – not expected here, but keep UX)
         toast.success(`Imported: ${j.successCount} success, ${j.failedCount} failed out of ${j.rowCount}`);
         fileInput.value = "";
         onClose();
@@ -195,6 +223,10 @@ export default function ImportModal({
           />
           <p className="text-xs text-slate-500 mt-2">
             CSV or XLSX files accepted. Large files process in the background.
+            <br />
+            <span className="text-slate-400">
+              Max file size for live upload: {(MAX_BYTES / (1024 * 1024)).toFixed(2)} MB
+            </span>
           </p>
         </div>
 
@@ -244,7 +276,7 @@ export default function ImportModal({
                 <span>Progress</span>
                 <span className="tabular-nums">{processed}/{rowCount || "?"} ({progress}%)</span>
               </div>
-              <div className="w-full h-3 bg-white border rounded-full overflow-hidden">
+              <div className="W-full h-3 bg-white border rounded-full overflow-hidden">
                 <div
                   className="h-full bg-gradient-to-r from-[#EF3340] to-[#C82333] transition-all"
                   style={{ width: `${progress}%` }}

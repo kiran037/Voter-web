@@ -11,15 +11,19 @@ type Purpose = "LOGIN" | "VERIFY_PHONE";
 // Infer the store type from the actual cookies() return type (works across Next versions)
 type CookieStore = Awaited<ReturnType<typeof serverCookies>>;
 
-const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "session";
+const COOKIE_NAME = (process.env.SESSION_COOKIE_NAME || "session").trim();
+const COOKIE_DOMAIN = (process.env.SESSION_COOKIE_DOMAIN || "").trim() || undefined;
+// e.g. SESSION_COOKIE_DOMAIN=.yourdomain.com  (applies to root + all subdomains)
+
 const OTP_DEV_BYPASS = (process.env.OTP_DEV_BYPASS || "").trim();
 const RESEND_COOLDOWN_SEC = Number(process.env.SMS_RESEND_COOLDOWN_SEC || "30");
 
 // Normalize cookies() so it works if it’s sync or async, with correct typing.
 async function getCookieStore(): Promise<CookieStore> {
   const maybe = (serverCookies as unknown as () => CookieStore | Promise<CookieStore>)();
-  // If it's a Promise, await; if not, return directly.
-  return (typeof (maybe as any)?.then === "function") ? await (maybe as Promise<CookieStore>) : (maybe as CookieStore);
+  return (typeof (maybe as any)?.then === "function")
+    ? await (maybe as Promise<CookieStore>)
+    : (maybe as CookieStore);
 }
 
 function addMinutes(d: Date, m: number): Date {
@@ -171,6 +175,7 @@ export function setJwtCookie(
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
+    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
     ...(typeof maxAgeSeconds === "number" ? { maxAge: maxAgeSeconds } : {}),
     ...(expires ? { expires } : {}),
   });

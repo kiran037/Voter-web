@@ -10,6 +10,8 @@ import type { Prisma, FamilyRole, ColourCode, FamilyIdType } from "@prisma/clien
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+// Optional: if your DB is in India, keep lambdas close
+// export const preferredRegion = "bom1";
 
 /* ========================= CSV/XLSX parsing ========================= */
 type UnknownRecord = Record<string, unknown>;
@@ -309,10 +311,9 @@ async function processImport({
     return;
   }
 
-  const mapped: Mapped[] = rawRows.map(mapRow);
-
-  const CHUNK = Number(process.env.IMPORT_CHUNK_SIZE ?? 200);
-  const CONCURRENCY = Number(process.env.IMPORT_CONCURRENCY ?? 8);
+  // Prod-safe defaults (override via env on Vercel)
+  const CHUNK = Number(process.env.IMPORT_CHUNK_SIZE ?? 100);
+  const CONCURRENCY = Number(process.env.IMPORT_CONCURRENCY ?? 2);
   const runLimited = limiter(CONCURRENCY);
 
   let success = 0;
@@ -322,8 +323,8 @@ async function processImport({
   const inBatchEpicToId = new Map<string, bigint>();
   const createdRowsPhase1: Array<{ createdId: bigint; data: Mapped }> = [];
 
-  for (let i = 0; i < mapped.length; i += CHUNK) {
-    const slice = mapped.slice(i, i + CHUNK);
+  for (let i = 0; i < rawRows.length; i += CHUNK) {
+    const slice = rawRows.slice(i, i + CHUNK).map(mapRow);
 
     const successRows: Prisma.ImportRowCreateManyInput[] = [];
     const failedRows: Prisma.ImportRowCreateManyInput[] = [];
@@ -430,8 +431,8 @@ async function processImport({
   }
 
   // Phase 2 — resolve head references and update headId
-  for (let i = 0; i < createdRowsPhase1.length; i += CHUNK) {
-    const slice = createdRowsPhase1.slice(i, i + CHUNK);
+  for (let i = 0; i < createdRowsPhase1.length; i += Number(process.env.IMPORT_CHUNK_SIZE ?? 100)) {
+    const slice = createdRowsPhase1.slice(i, i + Number(process.env.IMPORT_CHUNK_SIZE ?? 100));
 
     await Promise.all(
       slice.map(async ({ createdId, data }) => {
@@ -480,19 +481,30 @@ async function processImport({
 }
 
 /* ========================= route (vercel background-safe) ========================= */
+const MAX_UPLOAD_BYTES = Number(process.env.IMPORT_MAX_UPLOAD_BYTES ?? 4_500_000); // ~4.5MB Vercel limit
+
 export async function POST(req: NextRequest) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!isAdmin(user)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const form = await req.formData().catch(() => null);
-  const file = form?.get("file");
-  if (!file || !(file instanceof File)) {
+  const maybeFile = form?.get("file");
+
+  if (!maybeFile || !(maybeFile instanceof File)) {
     return NextResponse.json({ error: "file required (CSV/XLSX)" }, { status: 400 });
   }
 
-  const filename = file.name || "upload";
-  const buf = Buffer.from(await file.arrayBuffer());
+  // Guard: live body size limit (so we fail clearly instead of 413 by platform)
+  if (typeof maybeFile.size === "number" && maybeFile.size > MAX_UPLOAD_BYTES) {
+    return NextResponse.json(
+      { error: `File too large for live upload (${maybeFile.size} bytes). Limit ~${MAX_UPLOAD_BYTES} bytes.` },
+      { status: 413 }
+    );
+  }
+
+  const filename = maybeFile.name || "upload";
+  const buf = Buffer.from(await maybeFile.arrayBuffer());
 
   const batch = await prisma.importBatch.create({
     data: {
@@ -510,8 +522,8 @@ export async function POST(req: NextRequest) {
     queued: true,
     status: "PENDING",
   });
-  // Keep the function alive in the background on Vercel
-  res.headers.set("x-vercel-background", "1");
+  // Keep the function alive in the background on Vercel (must be "true")
+  res.headers.set("x-vercel-background", "true");
 
   // Continue processing after sending the response
   (async () => {
