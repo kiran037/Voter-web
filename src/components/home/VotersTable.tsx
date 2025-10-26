@@ -501,7 +501,7 @@ export default function VotersTable({
                             type="button"
                           >
                             {votedNow ? <CheckCircle size={12} /> : <X size={12} />}
-                            {votedNow ? "Voted" : "Not"}
+                            {votedNow ? "Voted" : "Not Voetd"}
                           </button>
                         ) : (
                           <span
@@ -512,7 +512,7 @@ export default function VotersTable({
                             title={votedNow ? "Voted" : "Not Voted"}
                           >
                             {votedNow ? <CheckCircle size={12} /> : <X size={12} />}
-                            {votedNow ? "Voted" : "Not"}
+                            {votedNow ? "Voted" : "Not Voted"}
                           </span>
                         )}
 
@@ -636,7 +636,7 @@ export default function VotersTable({
                               type="button"
                             >
                               {votedNow ? <CheckCircle size={16} /> : <X size={16} />}
-                              {votedNow ? "Voted" : "Not"}
+                              {votedNow ? "Voted" : "Not Voted"}
                             </button>
                           ) : (
                             <span
@@ -647,7 +647,7 @@ export default function VotersTable({
                               title={votedNow ? "Voted" : "Not Voted"}
                             >
                               {votedNow ? <CheckCircle size={16} /> : <X size={16} />}
-                              {votedNow ? "Voted" : "Not"}
+                              {votedNow ? "Voted" : "Not Voted"}
                             </span>
                           )}
                         </div>
