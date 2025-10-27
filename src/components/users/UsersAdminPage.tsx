@@ -1,7 +1,7 @@
 // src/components/users/UsersAdminPage.tsx
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -31,31 +31,29 @@ export default function UsersAdminPage() {
   const sp = useSearchParams();
   const pathname = usePathname();
 
-  // query state
-  const [q, setQ] = useState(sp.get("q") ?? "");
-  const [page, setPage] = useState<number>(Math.max(1, Number(sp.get("page") || "1")));
+  // ---------- query state ----------
+  const spQ = sp.get("q") ?? "";
+  const spPage = Math.max(1, Number(sp.get("page") || "1"));
 
-  // data
-  const [loading, setLoading] = useState(false);
-  const [items, setItems] = useState<UserRow[]>([]);
-  const [total, setTotal] = useState(0);
+  const [q, setQ] = useState(spQ);
+  const [page, setPage] = useState<number>(spPage);
 
-  // debounce search
+  // debounce search (and reset page on search change)
   const debounceRef = useRef<number | null>(null);
-  const [debouncedQ, setDebouncedQ] = useState(q.trim());
+  const [debouncedQ, setDebouncedQ] = useState(spQ.trim());
   useEffect(() => {
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(() => {
       const next = q.trim();
       setDebouncedQ(next);
       setPage(1);
-    }, 300);
+    }, 250);
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
   }, [q]);
 
-  // sync to URL
+  // ---------- sync to URL ----------
   useEffect(() => {
     const usp = new URLSearchParams();
     if (debouncedQ) usp.set("q", debouncedQ);
@@ -64,40 +62,76 @@ export default function UsersAdminPage() {
     router.replace(qs ? `${pathname}?${qs}` : pathname);
   }, [debouncedQ, page, router, pathname]);
 
-  // load list (admin-only) — wrapped in useCallback to satisfy deps
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    try {
-      const usp = new URLSearchParams();
-      usp.set("limit", String(LIMIT));
-      usp.set("page", String(page));
-      if (debouncedQ) usp.set("q", debouncedQ);
+  // ---------- data state ----------
+  const [loading, setLoading] = useState(false);
+  const [items, setItems] = useState<UserRow[]>([]);
+  const [total, setTotal] = useState(0);
 
-      const r = await fetch(`/api/users?${usp.toString()}`, { cache: "no-store", signal });
-      const j: UsersApiResponse = await r.json().catch(() => ({ page: 1, limit: LIMIT, total: 0, items: [] }));
-      if (!r.ok) {
-        if (r.status === 403) {
-          toast.error("Forbidden", { description: "Admins only." });
-        } else {
-          toast.error("Failed to load users", { description: (j as { error?: string })?.error || "Please try again." });
-        }
-        setItems([]);
-        setTotal(0);
-        return;
-      }
-      setItems(Array.isArray(j.items) ? j.items : []);
-      setTotal(Number.isFinite(j.total) ? j.total : 0);
-    } catch (e) {
-      if (!signal?.aborted) {
-        setItems([]);
-        setTotal(0);
-        const msg = e instanceof Error ? e.message : "Please try again.";
-        toast.error("Failed to load users", { description: msg });
-      }
-    } finally {
-      setLoading(false);
-    }
+  // track the active request to avoid race updates
+  const activeReqId = useRef(0);
+
+  // build query string (memo to avoid unnecessary fetch calls)
+  const listQS = useMemo(() => {
+    const usp = new URLSearchParams();
+    usp.set("limit", String(LIMIT));
+    usp.set("page", String(page));
+    if (debouncedQ) usp.set("q", debouncedQ);
+    return usp.toString();
   }, [debouncedQ, page]);
+
+  // ---------- fetch list ----------
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true);
+      const reqId = ++activeReqId.current;
+
+      try {
+        const r = await fetch(`/api/users?${listQS}`, { cache: "no-store", signal });
+        const j: UsersApiResponse =
+          (await r.json().catch(() => ({ page: 1, limit: LIMIT, total: 0, items: [] }))) as UsersApiResponse;
+
+        // if a newer request finished first, ignore this one
+        if (reqId !== activeReqId.current) return;
+
+        if (!r.ok) {
+          if (r.status === 403) {
+            toast.error("Forbidden", { description: "Admins only." });
+          } else if (r.status === 429) {
+            toast.error("Rate limit", { description: "Too many requests. Please slow down." });
+          } else {
+            toast.error("Failed to load users", { description: j?.error || "Please try again." });
+          }
+          setItems([]);
+          setTotal(0);
+          return;
+        }
+
+        const list = Array.isArray(j.items) ? j.items : [];
+        const count = Number.isFinite(j.total) ? j.total : 0;
+
+        // If the page is past the end (e.g., after deletes), jump back safely
+        const maxPage = Math.max(1, Math.ceil(count / LIMIT));
+        if (page > maxPage && maxPage !== page) {
+          setPage(maxPage);
+          // don't setItems here; next effect run will fetch the corrected page
+          return;
+        }
+
+        setItems(list);
+        setTotal(count);
+      } catch (e) {
+        if (!signal?.aborted) {
+          const msg = e instanceof Error ? e.message : "Please try again.";
+          toast.error("Failed to load users", { description: msg });
+          setItems([]);
+          setTotal(0);
+        }
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [listQS, page]
+  );
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -105,13 +139,76 @@ export default function UsersAdminPage() {
     return () => ctrl.abort();
   }, [isAdmin, load]);
 
-  // modals
+  // ---------- modals ----------
   const [addOpen, setAddOpen] = useState(false);
   const [editUser, setEditUser] = useState<UserRow | null>(null);
   const [deleteUser, setDeleteUser] = useState<UserRow | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // create
+  // ---------- keyboard shortcuts (fixed to ignore typing fields) ----------
+  useEffect(() => {
+    function isTypingTarget(target: EventTarget | null): boolean {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+
+      // If the element or any ancestor is contentEditable
+      if ((el as HTMLElement).closest?.('[contenteditable="true"]')) return true;
+
+      const tag = (el.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return true;
+
+      // ARIA textboxes (e.g., some custom inputs)
+      const role = el.getAttribute?.("role");
+      if (role === "textbox" || role === "searchbox" || role === "combobox") return true;
+
+      // If inside an element with role textbox (wrapper)
+      if (el.closest?.('[role="textbox"], [role="searchbox"], [role="combobox"]')) return true;
+
+      return false;
+    }
+
+    function onKey(e: KeyboardEvent) {
+      if (!isAdmin) return;
+
+      // Ignore while typing OR composing (IME)
+      // Some browsers expose isComposing on KeyboardEvent; if not present, it will be undefined/false.
+      const isComposing = (e as any).isComposing === true;
+      if (isComposing || isTypingTarget(e.target)) return;
+
+      // Do not hijack browser reload (Cmd/Ctrl+R)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r") return;
+
+      // Add new (plain "n") – only when no modal is open and not typing
+      if (e.key.toLowerCase() === "n" && !addOpen && !editUser && !deleteUser) {
+        e.preventDefault();
+        setAddOpen(true);
+        return;
+      }
+
+      // Refresh list (plain "r") – only when no modal is open and not typing
+      if (e.key.toLowerCase() === "r" && !addOpen && !editUser && !deleteUser) {
+        e.preventDefault();
+        const ctrl = new AbortController();
+        void load(ctrl.signal);
+        return;
+      }
+
+      // Global escape closes modals
+      if (e.key === "Escape") {
+        if (addOpen || editUser || deleteUser) {
+          e.preventDefault();
+          setAddOpen(false);
+          setEditUser(null);
+          setDeleteUser(null);
+        }
+      }
+    }
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isAdmin, addOpen, editUser, deleteUser, load]);
+
+  // ---------- CRUD handlers ----------
   async function createUser(data: { phone: string; name: string; role: UserRole }) {
     setSaving(true);
     const t = toast.loading("Creating user...");
@@ -135,7 +232,6 @@ export default function UsersAdminPage() {
     }
   }
 
-  // update
   async function updateUser(id: string, data: { phone: string; name: string; role: UserRole }) {
     setSaving(true);
     const t = toast.loading("Saving changes...");
@@ -159,7 +255,6 @@ export default function UsersAdminPage() {
     }
   }
 
-  // delete
   async function doDelete(id: string) {
     setSaving(true);
     const t = toast.loading("Deleting user...");
@@ -169,6 +264,8 @@ export default function UsersAdminPage() {
       if (!r.ok) throw new Error(j?.error || "Delete failed");
       toast.success("User deleted");
       setDeleteUser(null);
+
+      // If this was the last item on the page, step back (load() guards will ensure correctness)
       if (items.length === 1 && page > 1) setPage((p) => Math.max(1, p - 1));
       await load();
     } catch (e) {
@@ -180,7 +277,7 @@ export default function UsersAdminPage() {
     }
   }
 
-  // ----- render guards -----
+  // ---------- render guards ----------
   if (meLoading) {
     return (
       <div className="w-full mx-auto p-4 md:p-6">

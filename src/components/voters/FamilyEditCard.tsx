@@ -5,6 +5,19 @@ import Link from "next/link";
 import { Crown, ExternalLink, Users } from "lucide-react";
 import type { FamilyIdType, FamilyRole, Voter } from "@/types/voter";
 
+// Shared theme tokens (keep in sync with other components)
+const cardCls =
+  "bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/60 overflow-hidden";
+const headerCls =
+  "px-4 sm:px-6 py-3 sm:py-4 bg-gradient-to-r from-slate-50/80 to-white border-b border-slate-200/60";
+const titleCls = "text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2";
+
+const inputBase =
+  "w-full px-3 py-2 sm:px-4 sm:py-3 rounded-xl border transition-all outline-none disabled:bg-slate-50 disabled:text-slate-500 text-sm sm:text-base";
+const inputRing = "border-slate-300 focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20";
+const inputCls = `${inputBase} ${inputRing}`;
+const labelCls = "block text-xs sm:text-sm font-semibold text-slate-700 mb-1.5 sm:mb-2";
+
 export default function FamilyEditCard({
   voter,
   edit,
@@ -16,10 +29,6 @@ export default function FamilyEditCard({
   setField: <K extends keyof Voter>(k: K, v: Voter[K]) => void;
   onMakeHead: () => void;
 }) {
-  const inputCls =
-    "w-full px-3 py-2 sm:px-4 sm:py-3 border border-slate-300 rounded-lg sm:rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none disabled:bg-slate-50 disabled:text-slate-500 transition-all text-sm sm:text-base";
-  const labelCls = "block text-xs sm:text-sm font-semibold text-slate-700 mb-1.5 sm:mb-2";
-
   // ---------- Prefer EPIC for display ----------
   // 1) Try voter.head?.voterId (if server expanded it)
   const headObj = voter.head as unknown as Record<string, unknown> | undefined;
@@ -51,8 +60,7 @@ export default function FamilyEditCard({
       }
     }
 
-    // Only fetch if we don't already have EPIC from the expanded head object
-    // and the current headId looks like a numeric internal id.
+    // Only fetch if EPIC isn't already known and headId looks like numeric internal id.
     const rawHeadId = voter.headId as unknown as string | number | null | undefined;
     const headIdStr = rawHeadId != null ? String(rawHeadId) : "";
     const looksNumericInternal = /^\d+$/.test(headIdStr);
@@ -60,7 +68,6 @@ export default function FamilyEditCard({
     if (!headEpicFromObj && looksNumericInternal && headIdStr) {
       fetchHeadEpicByInternalId(headIdStr);
     } else {
-      // reset fetched values when EPIC already known or headId cleared
       setFetchedEpic(null);
       setFetchedHeadInternalId(null);
     }
@@ -70,30 +77,32 @@ export default function FamilyEditCard({
     };
   }, [voter.headId, headEpicFromObj]);
 
-  // What to show inside the input: EPIC from head object -> fetched EPIC -> (fallback) current headId
+  // Input display: EPIC (expanded) -> EPIC (fetched) -> raw headId
   const headInputValue =
     (headEpicFromObj && String(headEpicFromObj)) ||
     (fetchedEpic && String(fetchedEpic)) ||
     (voter.headId != null ? String(voter.headId) : "");
 
-  // For the little “Current Head” chip text: EPIC -> name -> internal id
+  // Chip text: EPIC -> name -> internal id
   const headDisplay =
     (headEpicFromObj && String(headEpicFromObj)) ||
     (fetchedEpic && String(fetchedEpic)) ||
     voter.head?.name ||
     (voter.headId ? String(voter.headId) : null);
 
-  // For link target: prefer internal numeric id if we have it (expanded or fetched), else headId (which might be EPIC)
+  // Link target: prefer internal numeric id (expanded/fetched), else headId (might be EPIC)
   const headLinkTarget =
     (voter.head as unknown as { id?: string | number } | undefined)?.id ??
     fetchedHeadInternalId ??
     voter.headId;
 
   return (
-    <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-      <div className="bg-gradient-to-r from-slate-50 to-white px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-200">
-        <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
-          <Users size={18} className="text-[#EF3340]" />
+    <div className={cardCls}>
+      <div className={headerCls}>
+        <h3 className={titleCls}>
+          <span className="inline-flex w-8 h-8 items-center justify-center rounded-full bg-[#EF3340]/10">
+            <Users size={18} className="text-[#EF3340]" />
+          </span>
           Family (Head-based)
         </h3>
       </div>
@@ -156,13 +165,13 @@ export default function FamilyEditCard({
                 type="button"
                 onClick={onMakeHead}
                 disabled={!edit}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3 bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-lg sm:rounded-xl text-sm sm:text-base font-semibold hover:shadow-lg hover:shadow-amber-500/25 transition-all disabled:opacity-60"
+                className="w-full inline-flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3 bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-xl text-sm sm:text-base font-semibold hover:shadow-lg hover:shadow-amber-500/25 active:scale-[0.98] transition-all disabled:opacity-60"
               >
                 <Crown size={18} />
                 Make Head
               </button>
             ) : (
-              <div className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-emerald-300 bg-emerald-50 rounded-lg sm:rounded-xl text-emerald-700 font-semibold flex items-center justify-center gap-2">
+              <div className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-emerald-300 bg-emerald-50 rounded-xl text-emerald-700 font-semibold flex items-center justify-center gap-2">
                 <Crown size={18} /> This person is the Head
               </div>
             )}
@@ -187,14 +196,11 @@ export default function FamilyEditCard({
             </div>
 
             {headLinkTarget && (
-              <div className="rounded-lg sm:rounded-xl border-2 border-blue-200 bg-blue-50 p-3 sm:p-4 flex items-center justify-between">
+              <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-3 sm:p-4 flex items-center justify-between">
                 <div className="flex items-center gap-2 text-blue-900 text-xs sm:text-sm">
                   <span>
                     Current Head:&nbsp;
-                    <Link
-                      href={`/voters/${headLinkTarget}`}
-                      className="font-semibold hover:underline"
-                    >
+                    <Link href={`/voters/${headLinkTarget}`} className="font-semibold hover:underline">
                       {headDisplay}
                     </Link>
                   </span>

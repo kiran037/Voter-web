@@ -1,3 +1,6 @@
+// src/app/voters/[id]/VoterPage.tsx (or wherever this file lives)
+// Drop-in replacement
+
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -15,7 +18,6 @@ import FamilyEditCard from "@/components/voters/FamilyEditCard";
 import FamilyCard from "@/components/voters/FamilyCard";
 import SurveyCard from "@/components/voters/SurveyCard";
 
-// (Header likely renders share actions internally)
 type Tab = "details" | "family" | "survey";
 
 // --- helpers ---
@@ -133,6 +135,37 @@ export default function VoterPage() {
   const [editSurvey, setEditSurvey] = useState(false);
   const [savingSurvey, setSavingSurvey] = useState(false);
 
+  // Save/Cancel helpers for which tab is active
+  const whichEditable: "details" | "survey" = tab === "details" ? "details" : "survey";
+  const isEditing = tab === "details" ? editDetails : tab === "survey" ? editSurvey : false;
+  const saving = tab === "details" ? savingDetails : savingSurvey;
+
+  // ---- keyboard: Ctrl/Cmd+S to save when editing ----
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!isAdmin || !isEditing) return;
+      const key = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && key === "s") {
+        e.preventDefault();
+        if (whichEditable === "details") void saveDetails();
+        else void saveSurvey();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isAdmin, isEditing, whichEditable]); // deps OK
+
+  // ---- soft protection against navigation while editing ----
+  useEffect(() => {
+    if (!isEditing) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isEditing]);
+
   // ----- save handlers (admins) -----
   async function saveDetails(e?: React.FormEvent) {
     e?.preventDefault();
@@ -148,7 +181,9 @@ export default function VoterPage() {
           resolvedHeadId = await resolveHeadToNumericId(rawHead);
           if (resolvedHeadId == null) {
             setSavingDetails(false);
-            toast.error("Invalid Head reference", { description: "We couldn’t find a voter matching the Head ID/EPIC you entered. Please check and try again." });
+            toast.error("Invalid Head reference", {
+              description: "We couldn’t find a voter matching the Head ID/EPIC you entered. Please check and try again.",
+            });
             return;
           }
         }
@@ -284,7 +319,7 @@ export default function VoterPage() {
       setFamily([]);
       return;
     }
-    const famId = voter.familyId as string; // guarded above
+    const famId = voter.familyId as string;
     if (lastQueryRef.current === famId) return;
     lastQueryRef.current = famId;
 
@@ -303,7 +338,7 @@ export default function VoterPage() {
           raw.map(async (row) => {
             const m = row as Record<string, unknown>;
             if (m.familyId) return m;
-            const d = await fetch(`/api/voters/${m.id}`, { cache: "no-store", signal: ctrl.signal })
+            const d = await fetch(`/api/voters/${(m as any).id}`, { cache: "no-store", signal: ctrl.signal })
               .then((x) => x.json())
               .catch(() => null);
             return d ? { ...m, familyId: d.familyId } : m;
@@ -370,12 +405,12 @@ export default function VoterPage() {
   if (loading) {
     return (
       <div className="w-full mx-auto p-4 md:p-6">
-        <Link href="/" className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6">
+        <Link href="/" className="inline-flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-6">
           <ArrowLeft size={20} />
           <span>Back to List</span>
         </Link>
-        <div className="flex items-center justify-center py-20">
-          <div className="w-12 h-12 border-4 border-gray-200 border-t-[#EF3340] rounded-full animate-spin" />
+        <div className="flex items-center justify-center py-16">
+          <div className="w-12 h-12 border-4 border-slate-200 border-t-[#EF3340] rounded-full animate-spin" />
         </div>
       </div>
     );
@@ -384,20 +419,16 @@ export default function VoterPage() {
   if (err || !voter) {
     return (
       <div className="w-full mx-auto p-4 md:p-6">
-        <Link href="/" className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6">
+        <Link href="/" className="inline-flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-6">
           <ArrowLeft size={20} />
           <span>Back to List</span>
         </Link>
-        <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-6 text-center">
-          <div className="text-red-600 font-medium">{err || "Voter not found"}</div>
+        <div className="rounded-2xl p-6 text-center bg-rose-50 border border-rose-200/70">
+          <div className="text-rose-700 font-semibold">{err || "Voter not found"}</div>
         </div>
       </div>
     );
   }
-
-  const whichEditable: "details" | "survey" = tab === "details" ? "details" : "survey";
-  const isEditing = tab === "details" ? editDetails : tab === "survey" ? editSurvey : false;
-  const saving = tab === "details" ? savingDetails : savingSurvey;
 
   return (
     <div className="mx-auto w-full p-4 md:p-6 space-y-6">
@@ -413,34 +444,66 @@ export default function VoterPage() {
         which={whichEditable}
         canEditAll={isAdmin}
       />
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-lg overflow-hidden">
-        <div className="flex flex-wrap gap-2 p-2 bg-slate-50 border-b border-slate-200">
-          {(["details", "family", "survey"] as Tab[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
-                tab === t ? "bg-white text-[#EF3340] shadow border border-slate-200" : "text-slate-700 hover:text-slate-900 hover:bg-white/60"
-              }`}
-            >
-              {t === "details" ? "Details" : t === "family" ? "Family" : "Survey"}
-            </button>
-          ))}
+
+      <div className="bg-white/95 backdrop-blur-xl rounded-2xl border border-slate-200/60 shadow-lg overflow-hidden">
+        {/* Tabs */}
+        <div className="flex flex-wrap gap-2 p-2 bg-slate-50/70 border-b border-slate-200/60">
+          {(["details", "family", "survey"] as Tab[]).map((t) => {
+            const active = tab === t;
+            return (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                  active
+                    ? "bg-white text-[#EF3340] shadow-sm border border-slate-200/60"
+                    : "text-slate-700 hover:text-slate-900 hover:bg-white/70"
+                }`}
+                type="button"
+              >
+                {t === "details" ? "Details" : t === "family" ? "Family" : "Survey"}
+              </button>
+            );
+          })}
         </div>
 
+        {/* Content */}
         <div className="p-6">
           {tab === "details" && (
             <div className="space-y-6">
-              <DetailsCard voter={voter} edit={editDetails && isAdmin} setField={setField} isAdmin={isAdmin} onSaveContacts={onSaveContacts} />
-              <FamilyEditCard voter={voter} edit={editDetails && isAdmin} setField={setField} onMakeHead={makeHead} />
+              <DetailsCard
+                voter={voter}
+                edit={editDetails && isAdmin}
+                setField={setField}
+                isAdmin={isAdmin}
+                onSaveContacts={onSaveContacts}
+              />
+              <FamilyEditCard
+                voter={voter}
+                edit={editDetails && isAdmin}
+                setField={setField}
+                onMakeHead={makeHead}
+              />
             </div>
           )}
 
           {tab === "family" && (
-            <FamilyCard voter={voter} family={family} famLoading={famLoading} famErr={famErr} onMakeHead={makeHead} />
+            <FamilyCard
+              voter={voter}
+              family={family}
+              famLoading={famLoading}
+              famErr={famErr}
+              onMakeHead={makeHead}
+            />
           )}
 
-          {tab === "survey" && <SurveyCard voter={voter} edit={editSurvey && isAdmin} setField={setField} />}
+          {tab === "survey" && (
+            <SurveyCard
+              voter={voter}
+              edit={editSurvey && isAdmin}
+              setField={setField}
+            />
+          )}
         </div>
       </div>
     </div>

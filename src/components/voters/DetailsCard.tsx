@@ -3,7 +3,23 @@
 import { Building2, MapPin, Phone, Award, User } from "lucide-react";
 import type { Voter } from "@/types/voter";
 
-// local helper (same logic as page)
+// ---- Theme tokens (match table/modals) ----
+const cardCls =
+  "bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/60 overflow-hidden";
+const headerCls =
+  "px-6 py-4 bg-gradient-to-r from-slate-50/80 to-white border-b border-slate-200/60 flex items-center gap-2";
+const titleCls = "text-lg font-bold text-slate-900 flex items-center gap-2";
+const labelCls = "block text-sm font-semibold text-slate-700 mb-2";
+const helpCls = "mt-2 text-xs text-slate-500";
+
+// Inputs
+const inputBase =
+  "w-full px-4 py-3 rounded-xl border transition-all outline-none disabled:bg-slate-50 disabled:text-slate-500";
+const inputRing =
+  "border-slate-300 focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20"; // brand accent
+const inputCls = `${inputBase} ${inputRing}`;
+
+// Local helper (same logic as page)
 function calcAgeFromDOB(dobISO: string): number | null {
   const parts = dobISO?.split("-").map((x) => Number(x));
   if (!parts || parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
@@ -37,57 +53,56 @@ export default function DetailsCard({
   const canEdit = isAdmin && edit;
   const displayAge = voter.age ?? (voter.dob ? calcAgeFromDOB(voter.dob) : null) ?? "";
 
-  const commonInputCls =
-    "w-full px-4 py-3 border border-slate-300 rounded-xl focus:border-[#EF3340] focus:ring-2 focus:ring-[#EF3340]/20 focus:outline-none disabled:bg-slate-50 disabled:text-slate-500 transition-all";
-
   return (
     <div className="space-y-6">
       {/* Basic Info */}
-      <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-        <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-4 border-b border-slate-200">
-          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-            <User size={20} className="text-[#EF3340]" />
+      <section className={cardCls}>
+        <div className={headerCls}>
+          <h3 className={titleCls}>
+            <span className="inline-flex w-8 h-8 items-center justify-center rounded-full bg-[#EF3340]/10">
+              <User size={18} className="text-[#EF3340]" />
+            </span>
             Basic Information
           </h3>
         </div>
         <div className="p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2">
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Full Name</label>
+              <label className={labelCls}>Full Name</label>
               <input
                 required
                 value={voter.name}
                 disabled={!canEdit}
                 onChange={(e) => setField("name", e.target.value)}
-                className={commonInputCls}
+                className={inputCls}
               />
             </div>
 
             {/* Voter ID (always uppercase) */}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Voter ID</label>
+              <label className={labelCls}>Voter ID</label>
               <input
                 value={voter.voterId || ""}
                 disabled={!canEdit}
                 onChange={(e) => setField("voterId", e.target.value.toUpperCase() as any)}
-                className={commonInputCls}
+                className={inputCls}
               />
             </div>
 
             {/* Father Name */}
             <div className="lg:col-span-2">
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Father&apos;s Name</label>
+              <label className={labelCls}>Father&apos;s Name</label>
               <input
                 value={voter.fatherName || ""}
                 disabled={!canEdit}
                 onChange={(e) => setField("fatherName", e.target.value)}
-                className={commonInputCls}
+                className={inputCls}
               />
             </div>
 
             {/* Age */}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Age</label>
+              <label className={labelCls}>Age</label>
               <input
                 value={displayAge}
                 disabled={!canEdit}
@@ -96,18 +111,18 @@ export default function DetailsCard({
                   const onlyDigits = e.target.value.replace(/\D/g, "");
                   setField("age", (onlyDigits ? Number(onlyDigits) : null) as any);
                 }}
-                className={commonInputCls}
+                className={inputCls}
               />
             </div>
 
             {/* Gender */}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Gender</label>
+              <label className={labelCls}>Gender</label>
               <select
                 value={voter.gender || ""}
                 disabled={!canEdit}
                 onChange={(e) => setField("gender", (e.target.value || null) as any)}
-                className={commonInputCls}
+                className={inputCls}
               >
                 <option value="">Select</option>
                 <option value="M">Male</option>
@@ -118,34 +133,36 @@ export default function DetailsCard({
 
             {/* DOB */}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Date of Birth</label>
+              <label className={labelCls}>Date of Birth</label>
               <input
                 type="date"
                 value={voter.dob || ""}
                 disabled={!canEdit}
                 onChange={(e) => setField("dob", (e.target.value || null) as any)}
-                className={commonInputCls}
+                className={inputCls}
               />
             </div>
 
             <div className="md:col-span-2">
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Address</label>
+              <label className={labelCls}>Address</label>
               <input
                 value={voter.address || ""}
                 disabled={!canEdit}
                 onChange={(e) => setField("address", e.target.value)}
-                className={commonInputCls}
+                className={inputCls}
               />
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
       {/* Booth / Ward Details */}
-      <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-        <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-4 border-b border-slate-200">
-          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-            <Building2 size={20} className="text-[#EF3340]" />
+      <section className={cardCls}>
+        <div className={headerCls}>
+          <h3 className={titleCls}>
+            <span className="inline-flex w-8 h-8 items-center justify-center rounded-full bg-[#EF3340]/10">
+              <Building2 size={18} className="text-[#EF3340]" />
+            </span>
             Booth & Ward Details
           </h3>
         </div>
@@ -158,7 +175,7 @@ export default function DetailsCard({
               ["srn", "SRN", "numeric"],
             ] as const).map(([key, label, mode]) => (
               <div key={key}>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">{label}</label>
+                <label className={labelCls}>{label}</label>
                 <input
                   value={(voter as any)[key] ?? ""}
                   disabled={!canEdit}
@@ -171,14 +188,14 @@ export default function DetailsCard({
                       setField(key as any, (onlyDigits ? Number(onlyDigits) : null) as any);
                     }
                   }}
-                  className={commonInputCls}
+                  className={inputCls}
                 />
               </div>
             ))}
 
             {/* Ward No */}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Ward No.</label>
+              <label className={labelCls}>Ward No.</label>
               <input
                 value={voter.wardNo ?? ""}
                 disabled={!canEdit}
@@ -187,91 +204,95 @@ export default function DetailsCard({
                   const onlyDigits = e.target.value.replace(/\D/g, "");
                   setField("wardNo", (onlyDigits ? Number(onlyDigits) : null) as any);
                 }}
-                className={commonInputCls}
+                className={inputCls}
               />
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
       {/* Contact */}
-      <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-        <div className="bg-gradient-to-r from-slate-50 to white px-6 py-4 border-b border-slate-200">
-          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-            <Phone size={20} className="text-[#EF3340]" />
+      <section className={cardCls}>
+        <div className={headerCls}>
+          <h3 className={titleCls}>
+            <span className="inline-flex w-8 h-8 items-center justify-center rounded-full bg-[#EF3340]/10">
+              <Phone size={18} className="text-[#EF3340]" />
+            </span>
             Contact Information
           </h3>
         </div>
         <div className="p-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Mobile 1</label>
+              <label className={labelCls}>Mobile 1</label>
               <input
                 value={voter.mobile1 || ""}
                 disabled={isAdmin ? !canEdit : false}
                 onChange={(e) => setField("mobile1", e.target.value)}
-                onBlur={() => { if (!isAdmin) onSaveContacts(); }}
-                className={commonInputCls}
+                onBlur={() => {
+                  if (!isAdmin) onSaveContacts();
+                }}
+                className={inputCls}
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Mobile 2</label>
+              <label className={labelCls}>Mobile 2</label>
               <input
                 value={voter.mobile2 || ""}
                 disabled={isAdmin ? !canEdit : false}
                 onChange={(e) => setField("mobile2", e.target.value)}
-                onBlur={() => { if (!isAdmin) onSaveContacts(); }}
-                className={commonInputCls}
+                onBlur={() => {
+                  if (!isAdmin) onSaveContacts();
+                }}
+                className={inputCls}
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Email</label>
+              <label className={labelCls}>Email</label>
               <input
                 value={voter.email || ""}
                 disabled={!canEdit}
                 onChange={(e) => setField("email", e.target.value)}
-                className={commonInputCls}
+                className={inputCls}
               />
             </div>
           </div>
 
-          {!isAdmin && (
-            <p className="mt-2 text-xs text-slate-500">
-              Tip: Phone changes are saved automatically when you leave the field.
-            </p>
-          )}
+          {!isAdmin && <p className={helpCls}>Tip: Phone changes are saved automatically when you leave the field.</p>}
         </div>
-      </div>
+      </section>
 
       {/* Classification */}
-      <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-        <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-4 border-b border-slate-200">
-          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-            <Award size={20} className="text-[#EF3340]" />
+      <section className={cardCls}>
+        <div className={headerCls}>
+          <h3 className={titleCls}>
+            <span className="inline-flex w-8 h-8 items-center justify-center rounded-full bg-[#EF3340]/10">
+              <Award size={18} className="text-[#EF3340]" />
+            </span>
             Classification & Status
           </h3>
         </div>
         <div className="p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Party Support (NEW) */}
+            {/* Party Support */}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Party Support</label>
+              <label className={labelCls}>Party Support</label>
               <input
                 value={voter.partySupport || ""}
                 disabled={!canEdit}
                 onChange={(e) => setField("partySupport", e.target.value)}
                 placeholder="e.g., INC / BJP / BSP / Independent / Neutral"
-                className={commonInputCls}
+                className={inputCls}
               />
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Voter&apos;s Side</label>
+              <label className={labelCls}>Voter&apos;s Side</label>
               <select
                 value={voter.colourCode}
                 disabled={!canEdit}
                 onChange={(e) => setField("colourCode", e.target.value as any)}
-                className={commonInputCls}
+                className={inputCls}
               >
                 <option value="OUR">Our</option>
                 <option value="OPPOSITE">Opposite</option>
@@ -288,7 +309,7 @@ export default function DetailsCard({
                     checked={!!(voter as any)[flag]}
                     disabled={!canEdit}
                     onChange={(e) => setField(flag, e.target.checked as any)}
-                    className="w-5 h-5 rounded-lg border-slate-300 text-[#EF3340] focus:ring-[#EF3340] transition-all"
+                    className="w-5 h-5 rounded-lg border-slate-300 text-[#EF3340] focus:ring-[#EF3340] focus:ring-2"
                   />
                   <span className="text-sm font-semibold text-slate-700 group-hover:text-slate-900">
                     {flag === "voted" ? "Voted" : flag === "starVoter" ? "Star Voter" : "Deceased"}
@@ -298,39 +319,41 @@ export default function DetailsCard({
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
       {/* Address */}
-      <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-        <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-4 border-b border-slate-200">
-          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-            <MapPin size={20} className="text-[#EF3340]" />
+      <section className={cardCls}>
+        <div className={headerCls}>
+          <h3 className={titleCls}>
+            <span className="inline-flex w-8 h-8 items-center justify-center rounded-full bg-[#EF3340]/10">
+              <MapPin size={18} className="text-[#EF3340]" />
+            </span>
             Address Information
           </h3>
         </div>
         <div className="p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Village</label>
+              <label className={labelCls}>Village</label>
               <input
                 value={voter.village || ""}
                 disabled={!canEdit}
                 onChange={(e) => setField("village", e.target.value)}
-                className={commonInputCls}
+                className={inputCls}
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">House No.</label>
+              <label className={labelCls}>House No.</label>
               <input
                 value={voter.houseNo || ""}
                 disabled={!canEdit}
                 onChange={(e) => setField("houseNo", e.target.value)}
-                className={commonInputCls}
+                className={inputCls}
               />
             </div>
           </div>
         </div>
-      </div>
+      </section>
     </div>
   );
 }

@@ -1,6 +1,9 @@
 // src/components/ui/Modal.tsx
 "use client";
 
+import { X } from "lucide-react";
+import { useEffect } from "react";
+
 export default function Modal({
   open,
   onClose,
@@ -14,28 +17,55 @@ export default function Modal({
   children: React.ReactNode;
   wide?: boolean;
 }) {
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
   if (!open) return null;
+
   return (
     <>
       <style jsx>{`
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        .fade-in { animation: fadeIn 0.2s ease-out; }
-        .slide-up { animation: slideUp 0.3s ease-out; }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes scaleIn {
+          from { opacity: 0; transform: scale(0.96); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        .fade-in { animation: fadeIn 0.25s ease-out; }
+        .scale-in { animation: scaleIn 0.25s ease-out; }
       `}</style>
+
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 fade-in"
+        role="dialog"
+        aria-modal="true"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 fade-in"
         onClick={onClose}
       >
         <div
-          className={`w-full ${wide ? "max-w-3xl" : "max-w-xl"} rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden slide-up`}
+          className={`w-full ${wide ? "max-w-3xl" : "max-w-xl"} rounded-3xl bg-white/95 backdrop-blur-xl border border-slate-200 shadow-2xl overflow-hidden scale-in`}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="px-6 py-4 bg-gradient-to-r from-slate-50 to-white border-b border-slate-200 flex items-center justify-between">
+          {/* Header */}
+          <div className="px-6 py-4 bg-gradient-to-r from-slate-50 to-white/90 border-b border-slate-200 flex items-center justify-between">
             <h2 className="text-lg font-bold text-slate-900">{title}</h2>
-            <button className="w-8 h-8 rounded-lg hover:bg-slate-100" onClick={onClose}>✕</button>
+            <button
+              className="p-1.5 rounded-lg hover:bg-slate-100 transition-all text-slate-600 hover:text-[#EF3340]"
+              onClick={onClose}
+            >
+              <X size={20} />
+            </button>
           </div>
-          <div className="p-6 max-h-[70vh] overflow-y-auto">{children}</div>
+
+          {/* Body */}
+          <div className="p-6 max-h-[75vh] overflow-y-auto">{children}</div>
         </div>
       </div>
     </>

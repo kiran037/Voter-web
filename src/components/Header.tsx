@@ -112,8 +112,8 @@ export default function Header() {
   const navCls = (active: boolean) =>
     `px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
       active
-        ? "bg-white text-[#EF3340] shadow border border-slate-200"
-        : "text-slate-700 hover:text-slate-900 hover:bg-white/60"
+        ? "bg-white/90 backdrop-blur-xl text-[#EF3340] shadow border border-slate-200/60"
+        : "text-slate-700 hover:text-slate-900 hover:bg-white/70"
     }`;
 
   if (hide) return null;
@@ -122,85 +122,31 @@ export default function Header() {
     <>
       <style jsx>{`
         @keyframes shimmer {
-          0% {
-            background-position: -200% center;
-          }
-          100% {
-            background-position: 200% center;
-          }
-        }
-        @keyframes float {
-          0%,
-          100% {
-            transform: translateY(0px);
-          }
-          50% {
-            transform: translateY(-3px);
-          }
-        }
-        @keyframes slideDown {
-          from {
-            opacity: 0;
-            transform: translateY(-10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        @keyframes scaleIn {
-          from {
-            opacity: 0;
-            transform: scale(0.95);
-          }
-          to {
-            opacity: 1;
-            transform: scale(1);
-          }
-        }
-        @keyframes pulse {
-          0%,
-          100% {
-            box-shadow: 0 0 0 0 rgba(239, 51, 64, 0.4);
-          }
-          50% {
-            box-shadow: 0 0 0 8px rgba(239, 51, 64, 0);
-          }
+          0% { background-position: -200% center; }
+          100% { background-position: 200% center; }
         }
         .shimmer {
           background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
           background-size: 200% 100%;
           animation: shimmer 2s infinite;
         }
-        .float {
-          animation: float 3s ease-in-out infinite;
-        }
-        .slide-down {
-          animation: slideDown 0.2s ease-out;
-        }
-        .scale-in {
-          animation: scaleIn 0.2s ease-out;
-        }
-        .pulse-ring {
-          animation: pulse 2s ease-in-out infinite;
-        }
       `}</style>
 
       <header
         className={`w-full sticky top-0 z-40 transition-all duration-300 ${
           scrolled
-            ? "bg-white/80 backdrop-blur-xl border-b border-gray-200/50 shadow-sm"
-            : "bg-gradient-to-b from-white to-gray-50/30"
+            ? "bg-white/80 backdrop-blur-xl border-b border-slate-200/60 shadow-sm"
+            : "bg-gradient-to-b from-white to-slate-50/40"
         }`}
       >
         <div className="mx-auto w-full px-4 h-16 flex items-center justify-between">
           {/* Left: Logo + Brand */}
           <Link
             href="/"
-            className="flex items-center gap-3 min-w-0 group relative overflow-hidden rounded-xl px-3 py-2 -ml-3 transition-all duration-300 hover:bg-gradient-to-r hover:from-red-50 hover:to-orange-50"
+            className="flex items-center gap-3 min-w-0 group relative overflow-hidden rounded-xl px-3 py-2 -ml-3 transition-all duration-300 hover:bg-gradient-to-r hover:from-rose-50 hover:to-orange-50"
           >
             <div className="absolute inset-0 shimmer opacity-0 group-hover:opacity-100 transition-opacity" />
-            <div className="relative w-8 h-8 float">
+            <div className="relative w-8 h-8">
               <Image
                 src="/logo.png"
                 alt="Apna Ward Logo"
@@ -234,11 +180,12 @@ export default function Header() {
               onClick={() => setOpen((v) => !v)}
               className={`flex items-center gap-3 rounded-full pl-1 pr-4 py-1 transition-all duration-300 ${
                 open
-                  ? "bg-gradient-to-r from-[#EF3340] to-[#FF5560] shadow-lg shadow-red-500/30 scale-105 pulse-ring"
-                  : "bg-white border-2 border-gray-200 hover:border-[#EF3340]/50 hover:shadow-md hover:scale-105"
+                  ? "bg-gradient-to-r from-[#EF3340] to-[#FF5560] shadow-lg shadow-red-500/30 scale-105"
+                  : "bg-white/90 backdrop-blur-xl border border-slate-200/60 hover:border-[#EF3340]/50 hover:shadow-md hover:scale-105"
               }`}
               aria-haspopup="menu"
               aria-expanded={open}
+              type="button"
             >
               <div
                 className={`w-9 h-9 rounded-full flex items-center justify-center font-semibold text-sm transition-all duration-300 ${
@@ -251,14 +198,14 @@ export default function Header() {
               </div>
               <span
                 className={`text-sm font-medium max-w-[140px] truncate transition-colors ${
-                  open ? "text-white" : "text-gray-700"
+                  open ? "text-white" : "text-slate-700"
                 }`}
               >
                 {displayName}
               </span>
               <ChevronDown
                 size={16}
-                className={`transition-all duration-300 ${open ? "rotate-180 text-white" : "text-gray-500"}`}
+                className={`transition-all duration-300 ${open ? "rotate-180 text-white" : "text-slate-500"}`}
               />
             </button>
 
@@ -266,16 +213,16 @@ export default function Header() {
               <div
                 ref={menuRef}
                 role="menu"
-                className="absolute right-0 mt-3 w-64 rounded-2xl border border-gray-200 bg-white/95 backdrop-blur-xl shadow-2xl overflow-hidden slide-down"
+                className="absolute right-0 mt-3 w-64 rounded-2xl border border-slate-200/60 bg-white/95 backdrop-blur-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2"
               >
-                <div className="p-4 bg-gradient-to-br from-red-50 to-orange-50 border-b border-gray-200">
+                <div className="p-4 bg-gradient-to-br from-rose-50 to-orange-50 border-b border-slate-200/60">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#EF3340] to-[#C82333] flex items-center justify-center text-white font-bold shadow-lg">
                       {initials || <UserIcon size={20} />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-gray-900 truncate">{displayName}</div>
-                      <div className="text-xs text-gray-600 truncate">{me?.phone ?? ""}</div>
+                      <div className="font-semibold text-slate-900 truncate">{displayName}</div>
+                      <div className="text-xs text-slate-600 truncate">{me?.phone ?? ""}</div>
                     </div>
                   </div>
                 </div>
@@ -285,7 +232,7 @@ export default function Header() {
                   <Link
                     href="/"
                     onClick={() => setOpen(false)}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gradient-to-r hover:from-red-50 hover:to-orange-50 transition-all duration-200"
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-gradient-to-r hover:from-rose-50 hover:to-orange-50 transition-all duration-200"
                     role="menuitem"
                   >
                     Home
@@ -294,13 +241,13 @@ export default function Header() {
                     <Link
                       href="/users"
                       onClick={() => setOpen(false)}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gradient-to-r hover:from-red-50 hover:to-orange-50 transition-all duration-200"
+                      className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-gradient-to-r hover:from-rose-50 hover:to-orange-50 transition-all duration-200"
                       role="menuitem"
                     >
                       Users
                     </Link>
                   )}
-                  <div className="h-px bg-gray-200 mx-4" />
+                  <div className="h-px bg-slate-200/60 mx-4" />
                 </div>
 
                 <button
@@ -308,11 +255,12 @@ export default function Header() {
                     setOpen(false);
                     setConfirmOpen(true);
                   }}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gradient-to-r hover:from-red-50 hover:to-orange-50 transition-all duration-200 group"
+                  className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-gradient-to-r hover:from-rose-50 hover:to-orange-50 transition-all duration-200 group"
                   role="menuitem"
+                  type="button"
                 >
-                  <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center group-hover:bg-red-100 transition-colors">
-                    <LogOut size={16} className="text-gray-600 group-hover:text-[#EF3340] transition-colors" />
+                  <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center group-hover:bg-rose-100 transition-colors">
+                    <LogOut size={16} className="text-slate-600 group-hover:text-[#EF3340] transition-colors" />
                   </div>
                   <span>Logout</span>
                 </button>
@@ -324,34 +272,36 @@ export default function Header() {
 
       {confirmOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 scale-in"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
           role="dialog"
           aria-modal="true"
           onClick={() => setConfirmOpen(false)}
         >
           <div
-            className="w-full max-w-md rounded-3xl bg-white shadow-2xl overflow-hidden scale-in"
+            className="w-full max-w-md rounded-3xl bg-white/95 backdrop-blur-xl border border-slate-200/60 shadow-2xl overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-6 bg-gradient-to-br from-red-50 to-orange-50 border-b border-gray-200">
-              <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-gradient-to-br from-[#EF3340] to-[#C82333] flex items-center justify-center shadow-lg pulse-ring">
+            <div className="p-6 bg-gradient-to-br from-rose-50 to-orange-50 border-b border-slate-200/60">
+              <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-gradient-to-br from-[#EF3340] to-[#C82333] flex items-center justify-center shadow-lg">
                 <LogOut size={24} className="text-white" />
               </div>
-              <h2 className="text-xl font-bold text-center text-gray-900">Confirm Logout</h2>
+              <h2 className="text-xl font-bold text-center text-slate-900">Confirm Logout</h2>
             </div>
-            <div className="p-6 text-center text-gray-600">
+            <div className="p-6 text-center text-slate-600">
               Are you sure you want to logout from your account?
             </div>
-            <div className="p-6 bg-gray-50 flex items-center justify-center gap-3">
+            <div className="p-6 bg-slate-50/60 flex items-center justify-center gap-3">
               <button
                 onClick={() => setConfirmOpen(false)}
-                className="px-6 py-2.5 rounded-xl font-medium border-2 border-gray-300 hover:border-gray-400 hover:bg-white transition-all duration-200 hover:scale-105 shadow-sm"
+                className="px-6 py-2.5 rounded-xl font-semibold border border-slate-300 hover:border-slate-400 bg-white hover:shadow-sm transition-all duration-200 active:scale-[0.98]"
+                type="button"
               >
                 Cancel
               </button>
               <button
                 onClick={doLogout}
-                className="px-6 py-2.5 rounded-xl font-medium bg-gradient-to-r from-[#EF3340] to-[#C82333] text-white hover:from-[#D82D39] hover:to-[#B01F2C] transition-all duration-200 hover:scale-105 shadow-lg hover:shadow-xl"
+                className="px-6 py-2.5 rounded-xl font-semibold bg-gradient-to-r from-[#EF3340] to-[#C82333] text-white hover:from-[#D82D39] hover:to-[#B01F2C] shadow-md hover:shadow-lg transition-all duration-200 active:scale-[0.98]"
+                type="button"
               >
                 Logout
               </button>

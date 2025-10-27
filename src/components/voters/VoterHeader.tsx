@@ -1,5 +1,4 @@
-///Users/xeoren/voter-web/src/components/voters/VoterHeader.tsx
-"use client";
+// "use client";
 
 import Link from "next/link";
 import {
@@ -37,7 +36,7 @@ export default function VoterHeader({
   canEditAll: boolean;
 }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl shadow-xl sm:shadow-2xl shadow-red-500/20 bg-gradient-to-br from-[#EF3340] via-[#E02030] to-[#C82333]">
+    <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl shadow-2xl shadow-red-500/20 bg-gradient-to-br from-[#EF3340] via-[#E02030] to-[#C82333]">
       {/* overlays */}
       <div className="absolute inset-0 bg-gradient-to-br from-black/10 to-transparent" />
       <div className="absolute -right-16 -top-16 w-40 h-40 sm:w-72 sm:h-72 bg-white/5 rounded-full blur-3xl" />
@@ -55,6 +54,7 @@ export default function VoterHeader({
               <button
                 onClick={onEdit}
                 className="inline-flex items-center gap-2 px-3 py-2 bg-white/90 backdrop-blur-xl text-[#EF3340] rounded-lg text-sm font-semibold hover:bg-white hover:shadow-xl transition-all border border-white/50"
+                type="button"
               >
                 Edit {which === "details" ? "Details" : "Survey"}
               </button>
@@ -65,12 +65,14 @@ export default function VoterHeader({
                   onClick={onSave}
                   disabled={saving}
                   className="inline-flex items-center gap-2 px-3 py-2 bg-emerald-500 text-white rounded-lg text-sm font-semibold hover:bg-emerald-600 hover:shadow-xl transition-all disabled:opacity-50"
+                  type="button"
                 >
                   {saving ? "Saving..." : "Save"}
                 </button>
                 <button
                   onClick={onCancel}
                   className="inline-flex items-center gap-2 px-3 py-2 bg-white/90 backdrop-blur-xl text-slate-700 rounded-lg text-sm font-semibold hover:bg-white hover:shadow-xl transition-all border border-white/50"
+                  type="button"
                 >
                   Cancel
                 </button>
@@ -165,7 +167,7 @@ export default function VoterHeader({
               )}
             </div>
 
-            {/* ===== Mobile actions moved to the very bottom of the card ===== */}
+            {/* ===== Mobile actions ===== */}
             <div className="sm:hidden mt-4 pt-3 border-t border-white/20">
               <div className="flex flex-wrap items-center gap-2">
                 <ShareActions voter={voter} family={family} />
@@ -174,7 +176,8 @@ export default function VoterHeader({
                     {tab === which && !isEditing && (
                       <button
                         onClick={onEdit}
-                        className="inline-flex items-center gap-2 px-3 py-2 bg-white text-[#EF3340] rounded-lg text-sm font-semibold border border-white/60"
+                        className="inline-flex items-center gap-2 px-3 py-2 bg-white text-[#EF3340] rounded-lg text-sm font-semibold border border-white/60 active:scale-[0.98]"
+                        type="button"
                       >
                         Edit {which === "details" ? "Details" : "Survey"}
                       </button>
@@ -184,13 +187,15 @@ export default function VoterHeader({
                         <button
                           onClick={onSave}
                           disabled={saving}
-                          className="inline-flex items-center gap-2 px-3 py-2 bg-emerald-500 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
+                          className="inline-flex items-center gap-2 px-3 py-2 bg-emerald-500 text-white rounded-lg text-sm font-semibold active:scale-[0.98] disabled:opacity-50"
+                          type="button"
                         >
                           {saving ? "Saving..." : "Save"}
                         </button>
                         <button
                           onClick={onCancel}
-                          className="inline-flex items-center gap-2 px-3 py-2 bg-white text-slate-700 rounded-lg text-sm font-semibold border border-white/60"
+                          className="inline-flex items-center gap-2 px-3 py-2 bg-white text-slate-700 rounded-lg text-sm font-semibold border border-white/60 active:scale-[0.98]"
+                          type="button"
                         >
                           Cancel
                         </button>
@@ -204,6 +209,7 @@ export default function VoterHeader({
           </div>
 
           {/* right side empty; desktop actions are absolute */}
+          <div className="hidden lg:block w-0" />
         </div>
       </div>
     </div>
