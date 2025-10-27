@@ -20,7 +20,6 @@ export default function DeleteConfirmModal({
 }) {
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
 
   const targets = useMemo<string[]>(() => {
@@ -31,7 +30,6 @@ export default function DeleteConfirmModal({
   // Focus the destructive button by default for quick Enter
   useEffect(() => {
     if (open) {
-      // slight delay so Modal can mount and focus trap attaches
       const t = setTimeout(() => confirmBtnRef.current?.focus(), 10);
       return () => clearTimeout(t);
     }
@@ -86,32 +84,8 @@ export default function DeleteConfirmModal({
     }
   }
 
-  const title = targets.length <= 1 ? "Delete Voter" : `Delete ${targets.length} Voters`;
-
-  // Small preview list for bulk actions (first 5 + “+N more”)
-  const preview = useMemo(() => {
-    if (targets.length <= 1) return null;
-    const first = targets.slice(0, 5);
-    const remaining = targets.length - first.length;
-    return (
-      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-        {first.map((tid) => (
-          <div
-            key={tid}
-            className="px-3 py-2 rounded-lg border border-rose-100 bg-rose-50/60 text-rose-800 truncate"
-            title={tid}
-          >
-            {tid}
-          </div>
-        ))}
-        {remaining > 0 && (
-          <div className="px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
-            +{remaining} more…
-          </div>
-        )}
-      </div>
-    );
-  }, [targets]);
+  const many = targets.length > 1;
+  const title = many ? `Delete ${targets.length} Voters` : "Delete Voter";
 
   return (
     <Modal open={open} onClose={onClose} title={title}>
@@ -128,12 +102,11 @@ export default function DeleteConfirmModal({
           </div>
           <h3 className="text-lg font-semibold text-slate-900 mb-2">Are you sure?</h3>
           <p className="text-slate-600">
-            {targets.length <= 1
-              ? "Do you want to delete this voter? This action cannot be undone."
-              : "Do you want to delete all selected voters? This action cannot be undone."}
+            {many
+              ? "This will permanently delete the selected voters."
+              : "This will permanently delete this voter."}{" "}
+            This action cannot be undone.
           </p>
-
-          {preview}
         </div>
 
         {err && (
