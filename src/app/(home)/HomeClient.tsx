@@ -28,11 +28,9 @@ export default function HomeClient() {
         const j = await r.json().catch(() => ({}));
         const role = j?.user?.role ?? "STAFF";
         if (!cancelled) setIsAdmin(role === "ADMIN");
-      } catch { }
+      } catch {}
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   // ---------- query state (synced to URL) ----------
@@ -61,9 +59,7 @@ export default function HomeClient() {
       setDebouncedQ(next);
       setPage(1);
     }, 300);
-    return () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    };
+    return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current); };
   }, [q]);
 
   // ---------- sync state -> URL ----------
@@ -122,20 +118,17 @@ export default function HomeClient() {
     return () => ctrl.abort();
   }, [loadList]);
 
-  useEffect(() => {
-    let active = true;
-    const onRefresh = () => {
-      if (!active) return;
-      const ctrl = new AbortController();
-      loadList(ctrl.signal);
-    };
-    window.addEventListener("voters:refresh", onRefresh);
-    return () => {
-      active = false;
-      window.removeEventListener("voters:refresh", onRefresh);
-    };
-  }, [loadList]);
+  // ---- local patch helpers (no full reload) ----
+  const patchItem = useCallback((id: string | number, patch: Partial<VoterListItem>) => {
+    const key = String(id);
+    setItems(prev => prev.map(it => String(it.id) === key ? { ...it, ...patch } : it));
+  }, []);
 
+  const removeItems = useCallback((ids: string[]) => {
+    const keys = new Set(ids.map(String));
+    setItems(prev => prev.filter(it => !keys.has(String(it.id))));
+    setTotal(t => Math.max(0, t - ids.length));
+  }, []);
 
   // ---------- modals ----------
   const [addOpen, setAddOpen] = useState(false);
@@ -294,7 +287,14 @@ export default function HomeClient() {
       </div>
 
       {/* Table */}
-      <VotersTable items={items} loading={loading} onDeleteAsk={(id) => setDeleteId(id)} isAdmin={isAdmin} />
+      <VotersTable
+        items={items}
+        loading={loading}
+        onDeleteAsk={(id) => setDeleteId(id)}
+        isAdmin={isAdmin}
+        onPatch={patchItem}
+        onRemoveMany={removeItems}
+      />
 
       {/* Pagination */}
       {!loading && items.length > 0 && (
@@ -348,13 +348,22 @@ export default function HomeClient() {
         }}
       />
       <DeleteConfirmModal
-        id={deleteId}
+        id={deleteId || undefined}
         open={isAdmin && !!deleteId}
         onClose={() => setDeleteId(null)}
         onDeleted={async () => {
+          if (!deleteId) return;
+          // remove locally; no global reload
+          removeItems([deleteId]);
+          setDeleteId(null);
+          // if page becomes empty after delete, pull previous page
           const remaining = items.length - 1;
-          if (remaining <= 0 && page > 1) setPage((p) => Math.max(1, p - 1));
-          await loadList();
+          if (remaining <= 0 && page > 1) {
+            setPage((p) => Math.max(1, p - 1));
+            // optional: fetch previous page silently
+            const ctrl = new AbortController();
+            loadList(ctrl.signal);
+          }
         }}
       />
     </main>

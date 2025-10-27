@@ -17,12 +17,11 @@ import {
   UsersRound,
   Map as MapIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type { ColourCode, VoterListItem, Voter, ListRow } from "@/types/voter";
 import { buildShareText } from "@/lib/share";
 import DeleteConfirmModal from "./DeleteConfirmModal";
 import Portal from "@/components/common/Portal";
-import { useCallback } from "react";
 
 function getColorBadge(code: ColourCode) {
   const styles: Record<ColourCode, string> = {
@@ -42,11 +41,15 @@ export default function VotersTable({
   loading,
   onDeleteAsk,
   isAdmin = false,
+  onPatch,        // new: parent-level local patch (optional)
+  onRemoveMany,   // new: parent-level local removal for bulk delete (optional)
 }: {
   items: VoterListItem[];
   loading: boolean;
   onDeleteAsk: (id: string) => void;
   isAdmin?: boolean;
+  onPatch?: (id: string | number, patch: Partial<VoterListItem>) => void;
+  onRemoveMany?: (ids: string[]) => void;
 }) {
   // ===== selection mode (admin-only) =====
   const [selectionMode, setSelectionMode] = useState(false);
@@ -85,6 +88,8 @@ export default function VotersTable({
     if (!isAdmin) return;
     const key = String(id);
     const nextVal = !currentValue;
+
+    // optimistic UI
     setSavingVote((s) => ({ ...s, [key]: true }));
     setVotedOverride((m) => ({ ...m, [key]: nextVal }));
 
@@ -95,12 +100,15 @@ export default function VotersTable({
         body: JSON.stringify({ voted: nextVal }),
       });
       if (!res.ok) {
+        // rollback on error
         setVotedOverride((m) => ({ ...m, [key]: currentValue }));
         const j = await res.json().catch(() => ({}));
         alert(j?.error || "Failed to update voted status");
       } else {
-        window.dispatchEvent(new CustomEvent("voters:refresh"));
+        // also patch parent state (keeps list in sync across pagination boundaries)
+        onPatch?.(id, { voted: nextVal });
       }
+      // NOTE: no global refresh here — keep UX snappy
     } catch (e: any) {
       setVotedOverride((m) => ({ ...m, [key]: currentValue }));
       alert(e?.message || "Failed to update voted status");
@@ -285,7 +293,6 @@ export default function VotersTable({
       return { top, left };
     }, [isMobile]);
 
-
     function toggle() {
       if (open) { setOpen(false); return; }
       const newPos = calculatePosition();
@@ -303,7 +310,6 @@ export default function VotersTable({
         window.removeEventListener("resize", handlePositionUpdate);
       };
     }, [open, isMobile, calculatePosition]);
-
 
     return (
       <>
@@ -501,7 +507,7 @@ export default function VotersTable({
                             type="button"
                           >
                             {votedNow ? <CheckCircle size={12} /> : <X size={12} />}
-                            {votedNow ? "Voted" : "Not Voetd"}
+                            {votedNow ? "Voted" : "Not Voted"}
                           </button>
                         ) : (
                           <span
@@ -628,7 +634,7 @@ export default function VotersTable({
                             <button
                               disabled={saving}
                               onClick={() => flipVoted(it.id, votedNow)}
-                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${votedNow
+                              className={`inline-flex items:center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${votedNow
                                   ? "bg-emerald-100 text-emerald-700 border-emerald-200"
                                   : "bg-rose-100 text-rose-700 border-rose-200"
                                 } ${saving ? "opacity-60 cursor-not-allowed" : "hover:shadow active:scale-95"}`}
@@ -780,6 +786,9 @@ export default function VotersTable({
           open={bulkOpen}
           onClose={() => setBulkOpen(false)}
           onDeleted={async () => {
+            const ids = Array.from(selected);
+            // parent updates its list without reload
+            onRemoveMany?.(ids);
             setSelected(new Set());
             setSelectionMode(false);
           }}
