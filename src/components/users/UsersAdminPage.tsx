@@ -7,7 +7,7 @@ import { ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { useMe } from "@/hooks/useMe";
 
-import Modal from "@/components/ui/Modal";
+import Modal from "@/components/home/Modal";
 import UsersHeader from "@/components/users/UsersHeader";
 import UsersList, { type UserRow } from "@/components/users/UsersList";
 import UsersPagination from "@/components/users/UsersPagination";

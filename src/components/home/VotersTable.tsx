@@ -1,4 +1,3 @@
-
 "use client";
 
 import Link from "next/link";
@@ -15,7 +14,6 @@ import {
   X,
   MapPin,
   IdCard,
-  UsersRound,
   Map as MapIcon,
   ChevronRight,
 } from "lucide-react";
@@ -25,6 +23,7 @@ import { buildShareText } from "@/lib/share";
 import DeleteConfirmModal from "./DeleteConfirmModal";
 import Portal from "@/components/common/Portal";
 
+// (kept in case you still use colour somewhere else)
 function getColorBadge(code: ColourCode) {
   const styles: Record<ColourCode, string> = {
     OUR: "bg-gradient-to-br from-emerald-500/15 to-emerald-600/10 text-emerald-700 border-emerald-500/25 shadow-sm shadow-emerald-500/10",
@@ -38,8 +37,25 @@ function getColorBadge(code: ColourCode) {
   return styles[code] || styles.OTHER;
 }
 
+// Party chip style
+function partyChip(s?: string | null) {
+  const base =
+    "inline-flex px-3 py-1.5 rounded-xl text-[11px] font-bold border tracking-wide";
+  if (!s) return `${base} bg-slate-100 text-slate-600 border-slate-200/60`;
+  return `${base} bg-indigo-50 text-indigo-700 border-indigo-200/60 shadow-sm shadow-indigo-500/10`;
+}
+
 function digitsOnly(s?: string | null) {
   return (s || "").replace(/\D/g, "");
+}
+
+// s/o / d/o rule for father name (mobile)
+function fatherLine(gender: any, fatherName?: string | null): string | null {
+  if (!fatherName) return null;
+  const g = typeof gender === "string" ? gender.toUpperCase() : gender;
+  if (g === "M") return `s/o ${fatherName}`;
+  if (g === "F") return `d/o ${fatherName}`;
+  return fatherName;
 }
 
 export default function VotersTable({
@@ -87,7 +103,6 @@ export default function VotersTable({
   function effectiveVoted(it: VoterListItem) {
     const ov = votedOverride[String(it.id)];
     return typeof ov === "boolean" ? ov : it.voted;
-    
   }
 
   async function flipVoted(id: string | number, currentValue: boolean) {
@@ -479,6 +494,8 @@ export default function VotersTable({
               {items.map((it, idx) => {
                 const votedNow = effectiveVoted(it);
                 const saving = !!savingVote[String(it.id)];
+                const father = fatherLine((it as any).gender, it.fatherName);
+                const party = (it as any).partySupport as string | null | undefined;
                 return (
                   <li
                     key={it.id}
@@ -502,35 +519,35 @@ export default function VotersTable({
                               <div className="font-semibold text-[15px] text-slate-900 leading-tight mb-1">
                                 {it.name}
                               </div>
+
+                              {/* Father BEFORE ID */}
+                              {father && (
+                                <div className="text-[12px] text-slate-600 font-medium">
+                                  {father}
+                                </div>
+                              )}
+
                               {it.voterId && (
                                 <div className="text-[12px] text-slate-500 font-medium">
                                   ID: {it.voterId}
                                 </div>
                               )}
                             </div>
-                            <span
-                              className={`shrink-0 inline-flex px-2 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wide ${getColorBadge(
-                                it.colourCode
-                              )}`}
-                            >
-                              {it.colourCode}
-                            </span>
+
+                            {/* PARTY chip on mobile: only if exists */}
+                            {party ? (
+                              <span className={`shrink-0 ${partyChip(party)}`}>
+                                {party}
+                              </span>
+                            ) : null}
                           </div>
 
-                          {(it.fatherName || typeof it.wardNo === "number") && (
+                          {typeof it.wardNo === "number" && (
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
-                              {it.fatherName && (
-                                <span className="inline-flex items-center gap-1.5 text-[12px] text-slate-600 font-medium">
-                                  <UsersRound size={13} strokeWidth={2.5} className="text-slate-400" />
-                                  {it.fatherName}
-                                </span>
-                              )}
-                              {typeof it.wardNo === "number" && (
-                                <span className="inline-flex items-center gap-1.5 text-[12px] text-slate-600 font-medium">
-                                  <MapIcon size={13} strokeWidth={2.5} className="text-slate-400" />
-                                  Ward {it.wardNo}
-                                </span>
-                              )}
+                              <span className="inline-flex items-center gap-1.5 text-[12px] text-slate-600 font-medium">
+                                <MapIcon size={13} strokeWidth={2.5} className="text-slate-400" />
+                                Ward {it.wardNo}
+                              </span>
                             </div>
                           )}
 
@@ -630,7 +647,7 @@ export default function VotersTable({
             </ul>
           </div>
 
-           {/* DESKTOP */}
+          {/* DESKTOP */}
           <div className="overflow-x-auto hidden sm:block">
             <table className="w-full">
               <thead className="bg-slate-50/60 backdrop-blur-sm border-b border-slate-200/60">
@@ -645,7 +662,6 @@ export default function VotersTable({
                       />
                     </th>
                   )}
-                  {/* FIXED: header order aligned with body columns */}
                   <th className="px-5 py-3.5 text-left text-[11px] font-bold text-slate-600 uppercase tracking-wider">
                     Voter Info
                   </th>
@@ -661,9 +677,12 @@ export default function VotersTable({
                   <th className="px-5 py-3.5 text-left text-[11px] font-bold text-slate-600 uppercase tracking-wider">
                     Location
                   </th>
+
+                  {/* CHANGED: Side → Party */}
                   <th className="px-5 py-3.5 text-left text-[11px] font-bold text-slate-600 uppercase tracking-wider">
-                    Side
+                    Party
                   </th>
+
                   <th className="px-5 py-3.5 text-center text-[11px] font-bold text-slate-600 uppercase tracking-wider">
                     Voted
                   </th>
@@ -679,6 +698,7 @@ export default function VotersTable({
                 {items.map((it, idx) => {
                   const votedNow = effectiveVoted(it);
                   const saving = !!savingVote[String(it.id)];
+                  const party = (it as any).partySupport as string | null | undefined;
                   return (
                     <tr
                       key={it.id}
@@ -737,15 +757,9 @@ export default function VotersTable({
                         )}
                       </td>
 
-                      {/* Side */}
+                      {/* Party */}
                       <td className="px-5 py-4">
-                        <span
-                          className={`inline-flex px-3 py-1.5 rounded-xl text-[11px] font-bold border uppercase tracking-wide ${getColorBadge(
-                            it.colourCode
-                          )}`}
-                        >
-                          {it.colourCode}
-                        </span>
+                        <span className={partyChip(party)}>{party || "—"}</span>
                       </td>
 
                       {/* Voted */}

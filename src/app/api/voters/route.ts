@@ -61,7 +61,6 @@ export async function GET(req: NextRequest) {
   const star = toBool(searchParams.get("starVoter"));
   const dead = toBool(searchParams.get("dead"));
 
-  // boothNo filter (numeric)
   const boothNoParam = (searchParams.get("boothNo") || "").trim();
   const boothNo = boothNoParam ? toInt(boothNoParam) : undefined;
 
@@ -76,6 +75,8 @@ export async function GET(req: NextRequest) {
       { mobile2: { contains: q } },
       { boothName: { contains: q } },
       { familyId: { contains: q } },
+      // NEW: allow search by party
+      { partySupport: { contains: q } },
     ];
   }
   if (colour !== undefined) where.colourCode = colour;
@@ -105,23 +106,22 @@ export async function GET(req: NextRequest) {
         starVoter: true,
         dead: true,
         updatedAt: true,
-
-        // 🔴 ensure these are returned
         fatherName: true,
         wardNo: true,
+        // NEW: return party
+        partySupport: true,
       },
     }),
   ]);
 
-  const typedRows = rows as VoterListRow[];
-  const items = typedRows.map((r) => ({
+  const items = rows.map((r) => ({
     ...r,
     id: r.id.toString(),
-    // (Dates will be serialized to ISO by NextResponse.json)
   }));
 
   return NextResponse.json({ page, limit, total, items });
 }
+
 
 export async function POST(req: NextRequest) {
   const user = await getAuthedUser(req);

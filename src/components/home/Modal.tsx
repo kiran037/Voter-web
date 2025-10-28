@@ -1,9 +1,8 @@
 ///Users/xeoren/voter-web/src/components/home/Modal.tsx
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, PropsWithChildren } from "react";
 import { X } from "lucide-react";
-import { PropsWithChildren } from "react";
 
 export default function Modal({
   open,
@@ -22,18 +21,16 @@ export default function Modal({
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const prevActiveRef = useRef<HTMLElement | null>(null);
 
-  // Close on ESC, lock background scroll, manage focus trap
   useEffect(() => {
     if (!open) return;
 
-    // remember previously focused element
     prevActiveRef.current = document.activeElement as HTMLElement;
 
-    // lock scroll
-    const { overflow } = document.body.style;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyOverflow = document.body.style.overflow;
+    document.documentElement.style.overflow = "hidden";
     document.body.style.overflow = "hidden";
 
-    // focus close button (or first focusable)
     const toFocus =
       closeBtnRef.current ||
       (dialogRef.current?.querySelector<HTMLElement>(
@@ -47,7 +44,6 @@ export default function Modal({
         onClose();
       }
       if (e.key === "Tab") {
-        // very small focus trap
         const focusables = dialogRef.current?.querySelectorAll<HTMLElement>(
           "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"
         );
@@ -73,8 +69,8 @@ export default function Modal({
 
     return () => {
       window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = overflow;
-      // restore focus
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      document.body.style.overflow = prevBodyOverflow;
       prevActiveRef.current?.focus?.();
     };
   }, [open, onClose]);
@@ -83,29 +79,16 @@ export default function Modal({
 
   return (
     <>
-      <style jsx>{`
-        @keyframes fadeIn {
-          from { opacity: 0 }
-          to { opacity: 1 }
-        }
-        @keyframes slideUp {
-          from { opacity: 0; transform: translateY(18px) scale(0.98) }
-          to { opacity: 1; transform: translateY(0) scale(1) }
-        }
-        .fade-in { animation: fadeIn 0.2s ease-out both }
-        .slide-up { animation: slideUp 0.28s cubic-bezier(.2,.8,.2,1) both }
-      `}</style>
-
-      {/* Backdrop */}
+      {/* Backdrop with blur */}
       <div
-        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm fade-in"
+        className="fixed inset-0 z-[1000] min-h-[100dvh] bg-black/40 backdrop-blur-sm sm:backdrop-blur-md"
         role="presentation"
         onClick={onClose}
       />
 
-      {/* Dialog */}
+      {/* Dialog container */}
       <div
-        className="fixed inset-0 z-[51] flex items-center justify-center p-3 sm:p-6"
+        className="fixed inset-0 z-[1001] min-h-[100dvh] flex items-center justify-center p-3 sm:p-6"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -114,9 +97,11 @@ export default function Modal({
         <div
           ref={dialogRef}
           onClick={(e) => e.stopPropagation()}
-          className={`w-full ${
-            wide ? "max-w-5xl" : "max-w-2xl"
-          } rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden slide-up`}
+          className={`w-full ${wide ? "max-w-5xl" : "max-w-2xl"} 
+            rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden
+            transition-transform duration-200 ease-out
+          `}
+          data-state="open"
           style={{ paddingBottom: "max(0px, env(safe-area-inset-bottom))" }}
         >
           <div className="px-4 sm:px-6 py-3 sm:py-4 bg-gradient-to-r from-slate-50 to-white border-b border-slate-200 flex items-center justify-between">
@@ -129,6 +114,7 @@ export default function Modal({
               className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center transition-colors"
               aria-label="Close dialog"
               title="Close"
+              type="button"
             >
               <X size={18} />
             </button>
