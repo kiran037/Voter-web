@@ -1,6 +1,3 @@
-// src/app/voters/[id]/VoterPage.tsx (or wherever this file lives)
-// Drop-in replacement
-
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -38,30 +35,24 @@ function calcAgeFromDOB(dobISO: string): number | null {
   return age >= 0 && age < 150 ? age : null;
 }
 
-// Resolve a "Head" reference that can be either an internal numeric id (digits)
-// or an EPIC (alphanumeric). Returns the internal numeric id or null.
 async function resolveHeadToNumericId(input: string): Promise<number | null> {
   if (!input) return null;
   const trimmed = input.trim();
   if (!trimmed) return null;
 
-  // digits-only? already an internal id
   if (/^\d+$/.test(trimmed)) return Number(trimmed);
 
-  // otherwise try to resolve by EPIC (voterId)
   try {
     const usp = new URLSearchParams({ q: trimmed, limit: "5" });
     const r = await fetch(`/api/voters?${usp.toString()}`, { cache: "no-store" });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || !Array.isArray(j.items)) return null;
 
-    // Prefer exact voterId (case-insensitive)
     const exact = j.items.find(
       (m: any) => (m?.voterId || "").toString().toUpperCase() === trimmed.toUpperCase()
     );
     if (exact?.id != null) return Number(exact.id);
 
-    // Fallback: match ignoring spaces
     const normalized = trimmed.replace(/\s+/g, "").toUpperCase();
     const loose = j.items.find(
       (m: any) => (m?.voterId || "").toString().replace(/\s+/g, "").toUpperCase() === normalized
@@ -80,7 +71,6 @@ export default function VoterPage() {
 
   const [tab, setTab] = useState<Tab>("details");
 
-  // ----- load voter -----
   const [loading, setLoading] = useState(true);
   const [voter, setVoter] = useState<Voter | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -115,7 +105,6 @@ export default function VoterPage() {
     return () => ctrl.abort();
   }, [load]);
 
-  // ----- setField wrapper (auto-calc age on dob change) -----
   function setField<K extends keyof Voter>(k: K, v: Voter[K]) {
     setVoter((s) => {
       if (!s) return s;
@@ -128,19 +117,16 @@ export default function VoterPage() {
     });
   }
 
-  // ----- edit states (admins only for full edit) -----
   const [editDetails, setEditDetails] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
 
   const [editSurvey, setEditSurvey] = useState(false);
   const [savingSurvey, setSavingSurvey] = useState(false);
 
-  // Save/Cancel helpers for which tab is active
   const whichEditable: "details" | "survey" = tab === "details" ? "details" : "survey";
   const isEditing = tab === "details" ? editDetails : tab === "survey" ? editSurvey : false;
   const saving = tab === "details" ? savingDetails : savingSurvey;
 
-  // ---- keyboard: Ctrl/Cmd+S to save when editing ----
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (!isAdmin || !isEditing) return;
@@ -153,9 +139,8 @@ export default function VoterPage() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isAdmin, isEditing, whichEditable]); // deps OK
+  }, [isAdmin, isEditing, whichEditable]);
 
-  // ---- soft protection against navigation while editing ----
   useEffect(() => {
     if (!isEditing) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -166,14 +151,12 @@ export default function VoterPage() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [isEditing]);
 
-  // ----- save handlers (admins) -----
   async function saveDetails(e?: React.FormEvent) {
     e?.preventDefault();
     if (!voter || !isAdmin) return;
 
     setSavingDetails(true);
     try {
-      // resolve head as before...
       let resolvedHeadId: number | null = null;
       if (voter.relationToHead !== "HEAD") {
         const rawHead = (voter.headId ?? "").toString().trim();
@@ -182,7 +165,7 @@ export default function VoterPage() {
           if (resolvedHeadId == null) {
             setSavingDetails(false);
             toast.error("Invalid Head reference", {
-              description: "We couldn’t find a voter matching the Head ID/EPIC you entered. Please check and try again.",
+              description: "We couldn't find a voter matching the Head ID/EPIC you entered. Please check and try again.",
             });
             return;
           }
@@ -209,13 +192,9 @@ export default function VoterPage() {
         starVoter: !!voter.starVoter,
         dead: !!voter.dead,
         dob: voter.dob || null,
-
-        // NEW
         fatherName: voter.fatherName?.trim() || null,
         wardNo: voter.wardNo ?? null,
         partySupport: voter.partySupport?.trim() || null,
-
-        // family
         familyId: voter.familyId?.trim() || null,
         familyIdType: voter.familyIdType || null,
         relationToHead: voter.relationToHead || null,
@@ -282,9 +261,8 @@ export default function VoterPage() {
     load();
   }
 
-  // ----- Non-admin: allow ONLY phone edits (auto-save on blur) -----
   async function onSaveContacts(mobile1?: string, mobile2?: string) {
-    if (!voter || isAdmin) return; // admins use header Save
+    if (!voter || isAdmin) return;
 
     try {
       const payload: Partial<Voter> = {
@@ -307,7 +285,6 @@ export default function VoterPage() {
     }
   }
 
-  // ----- family tab (load by familyId when opened) -----
   const [famLoading, setFamLoading] = useState(false);
   const [famErr, setFamErr] = useState<string | null>(null);
   const [family, setFamily] = useState<ListRow[]>([]);
@@ -401,11 +378,10 @@ export default function VoterPage() {
     toast.success("Head updated", { description: `${voter.name} is now marked as Head of Family.` });
   }
 
-  // ----- UI states -----
   if (loading) {
     return (
-      <div className="w-full mx-auto p-4 md:p-6">
-        <Link href="/" className="inline-flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-6">
+      <div className="w-full mx-auto p-3 sm:p-4 md:p-6">
+        <Link href="/" className="inline-flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-4 sm:mb-6">
           <ArrowLeft size={20} />
           <span>Back to List</span>
         </Link>
@@ -418,8 +394,8 @@ export default function VoterPage() {
 
   if (err || !voter) {
     return (
-      <div className="w-full mx-auto p-4 md:p-6">
-        <Link href="/" className="inline-flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-6">
+      <div className="w-full mx-auto p-3 sm:p-4 md:p-6">
+        <Link href="/" className="inline-flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-4 sm:mb-6">
           <ArrowLeft size={20} />
           <span>Back to List</span>
         </Link>
@@ -431,7 +407,7 @@ export default function VoterPage() {
   }
 
   return (
-    <div className="mx-auto w-full p-4 md:p-6 space-y-6">
+    <div className="mx-auto w-full p-2 sm:p-4 md:p-6 space-y-3 sm:space-y-6">
       <VoterHeader
         voter={voter}
         family={family}
@@ -445,16 +421,16 @@ export default function VoterPage() {
         canEditAll={isAdmin}
       />
 
-      <div className="bg-white/95 backdrop-blur-xl rounded-2xl border border-slate-200/60 shadow-lg overflow-hidden">
+      <div className="bg-white/95 backdrop-blur-xl rounded-xl sm:rounded-2xl border border-slate-200/60 shadow-lg overflow-hidden">
         {/* Tabs */}
-        <div className="flex flex-wrap gap-2 p-2 bg-slate-50/70 border-b border-slate-200/60">
+        <div className="flex flex-wrap gap-1.5 sm:gap-2 p-1.5 sm:p-2 bg-slate-50/70 border-b border-slate-200/60">
           {(["details", "family", "survey"] as Tab[]).map((t) => {
             const active = tab === t;
             return (
               <button
                 key={t}
                 onClick={() => setTab(t)}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl text-xs sm:text-sm font-semibold transition-all ${
                   active
                     ? "bg-white text-[#EF3340] shadow-sm border border-slate-200/60"
                     : "text-slate-700 hover:text-slate-900 hover:bg-white/70"
@@ -468,9 +444,9 @@ export default function VoterPage() {
         </div>
 
         {/* Content */}
-        <div className="p-6">
+        <div className="p-3 sm:p-6">
           {tab === "details" && (
-            <div className="space-y-6">
+            <div className="space-y-3 sm:space-y-6">
               <DetailsCard
                 voter={voter}
                 edit={editDetails && isAdmin}

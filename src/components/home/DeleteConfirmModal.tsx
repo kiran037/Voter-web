@@ -1,19 +1,21 @@
 "use client";
 
 import Modal from "./Modal";
-import { Trash2 } from "lucide-react";
+import { Trash2, AlertTriangle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 export default function DeleteConfirmModal({
   id,
   ids,
+  deleteAll,
   open,
   onClose,
   onDeleted,
 }: {
   id?: string | null;              // single id (backwards compatible)
   ids?: string[] | null;           // optional bulk ids
+  deleteAll?: boolean;             // NEW: delete all voters flag
   open: boolean;
   onClose: () => void;
   onDeleted: () => Promise<void> | void;
@@ -23,9 +25,10 @@ export default function DeleteConfirmModal({
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
 
   const targets = useMemo<string[]>(() => {
+    if (deleteAll) return [];
     if (Array.isArray(ids) && ids.length) return ids;
     return id ? [id] : [];
-  }, [id, ids]);
+  }, [id, ids, deleteAll]);
 
   // Focus the destructive button by default for quick Enter
   useEffect(() => {
@@ -36,15 +39,32 @@ export default function DeleteConfirmModal({
   }, [open]);
 
   async function doDelete() {
-    if (targets.length === 0) return;
+    if (!deleteAll && targets.length === 0) return;
     setDeleting(true);
     setErr(null);
 
     const t = toast.loading(
-      targets.length === 1 ? "Deleting voter..." : `Deleting ${targets.length} voters...`
+      deleteAll
+        ? "Deleting all voters..."
+        : targets.length === 1
+        ? "Deleting voter..."
+        : `Deleting ${targets.length} voters...`
     );
     try {
-      if (targets.length === 1) {
+      if (deleteAll) {
+        // DELETE ALL VOTERS
+        const res = await fetch(`/api/voters`, { method: "DELETE" });
+        if (res.status === 401) {
+          toast.dismiss(t);
+          toast.error("Session expired. Please sign in again.");
+          window.location.href = "/signin?next=/";
+          return;
+        }
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j?.error || "Delete all failed");
+        }
+      } else if (targets.length === 1) {
         const res = await fetch(`/api/voters/${targets[0]}`, { method: "DELETE" });
         if (res.status === 401) {
           toast.dismiss(t);
@@ -72,7 +92,13 @@ export default function DeleteConfirmModal({
       }
 
       toast.dismiss(t);
-      toast.success(targets.length === 1 ? "Voter deleted" : `Deleted ${targets.length} voters`);
+      toast.success(
+        deleteAll
+          ? "All voters deleted successfully"
+          : targets.length === 1
+          ? "Voter deleted"
+          : `Deleted ${targets.length} voters`
+      );
       onClose();
       await onDeleted(); // parent updates list
     } catch (e: any) {
@@ -85,7 +111,11 @@ export default function DeleteConfirmModal({
   }
 
   const many = targets.length > 1;
-  const title = many ? `Delete ${targets.length} Voters` : "Delete Voter";
+  const title = deleteAll
+    ? "Delete All Voters"
+    : many
+    ? `Delete ${targets.length} Voters`
+    : "Delete Voter";
 
   return (
     <Modal open={open} onClose={onClose} title={title}>
@@ -97,16 +127,37 @@ export default function DeleteConfirmModal({
         className="space-y-4"
       >
         <div className="text-center py-4">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-rose-100 flex items-center justify-center border border-rose-200 shadow-sm">
-            <Trash2 size={32} className="text-rose-600" />
+          <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center border shadow-sm ${
+            deleteAll
+              ? "bg-red-100 border-red-200"
+              : "bg-rose-100 border-rose-200"
+          }`}>
+            {deleteAll ? (
+              <AlertTriangle size={32} className="text-red-600" />
+            ) : (
+              <Trash2 size={32} className="text-rose-600" />
+            )}
           </div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">Are you sure?</h3>
-          <p className="text-slate-600">
-            {many
-              ? "This will permanently delete the selected voters."
-              : "This will permanently delete this voter."}{" "}
-            This action cannot be undone.
-          </p>
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">
+            {deleteAll ? "Delete ALL Voters?" : "Are you sure?"}
+          </h3>
+          {deleteAll ? (
+            <div className="space-y-2">
+              <p className="text-slate-600 font-medium">
+                This will permanently delete <strong>ALL</strong> voters from your database.
+              </p>
+              <p className="text-rose-600 font-bold text-sm">
+                ⚠️ This action cannot be undone and you will lose all your data!
+              </p>
+            </div>
+          ) : (
+            <p className="text-slate-600">
+              {many
+                ? "This will permanently delete the selected voters."
+                : "This will permanently delete this voter."}{" "}
+              This action cannot be undone.
+            </p>
+          )}
         </div>
 
         {err && (
@@ -132,7 +183,11 @@ export default function DeleteConfirmModal({
             ref={confirmBtnRef}
             type="submit"
             disabled={deleting}
-            className="px-6 py-3 bg-gradient-to-r from-rose-600 to-rose-700 text-white rounded-xl font-semibold hover:shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all"
+            className={`px-6 py-3 text-white rounded-xl font-semibold hover:shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all ${
+              deleteAll
+                ? "bg-gradient-to-r from-red-600 to-red-700"
+                : "bg-gradient-to-r from-rose-600 to-rose-700"
+            }`}
           >
             {deleting ? "Deleting..." : "Yes, Delete"}
           </button>

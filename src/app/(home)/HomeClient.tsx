@@ -11,6 +11,7 @@ import {
   Upload,
   X,
   ChevronDown,
+  Trash2,
 } from "lucide-react";
 import type { ColourCode, VoterListItem } from "@/types/voter";
 
@@ -162,6 +163,7 @@ export default function HomeClient() {
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
 
   const activeFilters = [colourCode, voted, starVoter, dead, boothNo].filter(Boolean).length;
 
@@ -248,6 +250,14 @@ export default function HomeClient() {
                   <Upload size={18} />
                   <span>Bulk</span>
                 </button>
+                <button
+                  onClick={() => setDeleteAllOpen(true)}
+                  className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 md:px-5 md:py-3 bg-white/90 backdrop-blur-xl text-rose-600 rounded-lg sm:rounded-xl text-sm sm:text-base font-semibold hover:bg-white hover:shadow-xl transition-all border border-white/50"
+                >
+                  <Trash2 size={18} />
+                  <span className="hidden sm:inline">Delete All</span>
+                  <span className="sm:hidden">All</span>
+                </button>
               </div>
             )}
           </div>
@@ -305,7 +315,6 @@ export default function HomeClient() {
               />
             </button>
 
-            {/* Filters row */}
             {/* Filters row */}
             <div
               className={`mt-3 ${filtersOpen ? "block" : "hidden sm:block"
@@ -471,6 +480,16 @@ export default function HomeClient() {
             const ctrl = new AbortController();
             loadList(ctrl.signal);
           }
+        }}
+      />
+      <DeleteConfirmModal
+        deleteAll
+        open={isAdmin && deleteAllOpen}
+        onClose={() => setDeleteAllOpen(false)}
+        onDeleted={async () => {
+          setDeleteAllOpen(false);
+          setPage(1);
+          await loadList();
         }}
       />
     </main>

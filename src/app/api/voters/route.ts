@@ -1,4 +1,4 @@
-// // app/api/voters/route.ts
+// app/api/voters/route.ts
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -43,7 +43,7 @@ type VoterListRow = {
   dead: boolean;
   updatedAt: Date;
 
-  // 🔴 added for Home table
+  // added for Home table
   fatherName: string | null;
   wardNo: number | null;
 };
@@ -75,7 +75,6 @@ export async function GET(req: NextRequest) {
       { mobile2: { contains: q } },
       { boothName: { contains: q } },
       { familyId: { contains: q } },
-      // NEW: allow search by party
       { partySupport: { contains: q } },
     ];
   }
@@ -108,7 +107,6 @@ export async function GET(req: NextRequest) {
         updatedAt: true,
         fatherName: true,
         wardNo: true,
-        // NEW: return party
         partySupport: true,
       },
     }),
@@ -139,7 +137,6 @@ export async function POST(req: NextRequest) {
     const familyId: string | null =
       typeof body.familyId === "string" && body.familyId.trim() ? body.familyId.trim() : null;
 
-    // optional enum (string) -> FamilyIdType
     const familyIdType: FamilyIdType | null =
       typeof body.familyIdType === "string" && body.familyIdType.trim()
         ? (body.familyIdType.toUpperCase() as FamilyIdType)
@@ -188,7 +185,6 @@ export async function POST(req: NextRequest) {
 
         dob: body.dob ? new Date(body.dob) : null,
 
-        // NEW fields
         fatherName: typeof body.fatherName === "string" ? body.fatherName : null,
         partySupport: typeof body.partySupport === "string" ? body.partySupport : null,
         wardNo: typeof body.wardNo === "number" ? body.wardNo : null,
@@ -210,5 +206,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "duplicate entry" }, { status: 409 });
     }
     return NextResponse.json({ error: e?.message || "failed" }, { status: 500 });
+  }
+}
+
+// NEW: DELETE ALL VOTERS
+export async function DELETE(req: NextRequest) {
+  const user = await getAuthedUser(req);
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!isAdmin(user)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
+  try {
+    // Delete all voters
+    const result = await prisma.voter.deleteMany({});
+    
+    return NextResponse.json({ 
+      message: "All voters deleted successfully",
+      count: result.count 
+    });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || "failed to delete all voters" }, { status: 500 });
   }
 }
