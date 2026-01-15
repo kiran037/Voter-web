@@ -18,24 +18,10 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import type { ColourCode, VoterListItem, Voter, ListRow } from "@/types/voter";
+import type { VoterListItem, Voter, ListRow } from "@/types/voter";
 import { buildShareText } from "@/lib/share";
 import DeleteConfirmModal from "./DeleteConfirmModal";
 import Portal from "@/components/common/Portal";
-
-// (kept in case you still use colour somewhere else)
-function getColorBadge(code: ColourCode) {
-  const styles: Record<ColourCode, string> = {
-    OUR: "bg-gradient-to-br from-emerald-500/15 to-emerald-600/10 text-emerald-700 border-emerald-500/25 shadow-sm shadow-emerald-500/10",
-    OPPOSITE:
-      "bg-gradient-to-br from-rose-500/15 to-rose-600/10 text-rose-700 border-rose-500/25 shadow-sm shadow-rose-500/10",
-    DOUBTFUL:
-      "bg-gradient-to-br from-amber-500/15 to-amber-600/10 text-amber-700 border-amber-500/25 shadow-sm shadow-amber-500/10",
-    OTHER:
-      "bg-gradient-to-br from-slate-500/10 to-slate-600/8 text-slate-700 border-slate-500/20 shadow-sm shadow-slate-500/5",
-  };
-  return styles[code] || styles.OTHER;
-}
 
 // Party chip style
 function partyChip(s?: string | null) {

@@ -166,7 +166,6 @@ export default function SignInClient() {
   }
 
   const phoneValid = /^\d{10}$/.test(phone);
-  const canSend = !loading && phoneValid && step !== "done";
   const canVerify = !loading && code.length >= 4; // allow enter earlier; full check in verify()
 
   return (
@@ -187,7 +186,7 @@ export default function SignInClient() {
         }
       `}</style>
 
-      <main className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 flex items-center justify-center p-4">
+      <main className="min-h-screen bg-linear-to-br from-slate-50 via-white to-slate-100 flex items-center justify-center p-4">
         <div className="w-full max-w-md space-y-6">
           {/* Logo & Title */}
           <div className="text-center elevate" style={{ animationDelay: "40ms" }}>
@@ -292,7 +291,7 @@ export default function SignInClient() {
                     !phoneValid ||
                     (step === "sent" && !canVerify)
                   }
-                  className="w-full bg-gradient-to-r from-[#EF3340] to-[#C82333] text-white py-3.5 rounded-xl font-semibold hover:shadow-lg active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 flex items-center justify-center gap-2"
+                  className="w-full bg-linear-to-r from-[#EF3340] to-[#C82333] text-white py-3.5 rounded-xl font-semibold hover:shadow-lg active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 flex items-center justify-center gap-2"
                 >
                   {loading ? (
                     <>

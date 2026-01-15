@@ -266,7 +266,9 @@ export default function ImportModal({
         toast.success(
           `Imported: ${j.successCount} success, ${j.failedCount} failed of ${j.rowCount}`
         );
-        inputRef.current && (inputRef.current.value = "");
+        if (inputRef.current) {
+          inputRef.current.value = "";
+        }
         onClose();
         await onImported();
       }
@@ -507,7 +509,7 @@ export default function ImportModal({
                   onClick={onClose}
                   className="px-6 py-3 border border-slate-300 rounded-xl font-medium hover:bg-slate-50 transition-colors"
                 >
-                  Close (runs in background)
+                  Close
                 </button>
               )}
             </div>

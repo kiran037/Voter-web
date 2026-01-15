@@ -127,31 +127,8 @@ export default function VoterPage() {
   const isEditing = tab === "details" ? editDetails : tab === "survey" ? editSurvey : false;
   const saving = tab === "details" ? savingDetails : savingSurvey;
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (!isAdmin || !isEditing) return;
-      const key = e.key.toLowerCase();
-      if ((e.ctrlKey || e.metaKey) && key === "s") {
-        e.preventDefault();
-        if (whichEditable === "details") void saveDetails();
-        else void saveSurvey();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isAdmin, isEditing, whichEditable]);
-
-  useEffect(() => {
-    if (!isEditing) return;
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [isEditing]);
-
-  async function saveDetails(e?: React.FormEvent) {
+  // Wrapped in useCallback to satisfy linter dependencies
+  const saveDetails = useCallback(async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!voter || !isAdmin) return;
 
@@ -218,14 +195,10 @@ export default function VoterPage() {
     } finally {
       setSavingDetails(false);
     }
-  }
+  }, [voter, isAdmin, id, load]);
 
-  function cancelDetails() {
-    setEditDetails(false);
-    load();
-  }
-
-  async function saveSurvey(e?: React.FormEvent) {
+  // Wrapped in useCallback to satisfy linter dependencies
+  const saveSurvey = useCallback(async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!voter || !isAdmin) return;
 
@@ -254,6 +227,35 @@ export default function VoterPage() {
     } finally {
       setSavingSurvey(false);
     }
+  }, [voter, isAdmin, id, load]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!isAdmin || !isEditing) return;
+      const key = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && key === "s") {
+        e.preventDefault();
+        if (whichEditable === "details") void saveDetails();
+        else void saveSurvey();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isAdmin, isEditing, whichEditable, saveDetails, saveSurvey]);
+
+  useEffect(() => {
+    if (!isEditing) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isEditing]);
+
+  function cancelDetails() {
+    setEditDetails(false);
+    load();
   }
 
   function cancelSurvey() {

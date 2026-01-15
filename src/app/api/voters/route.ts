@@ -28,26 +28,6 @@ function pickColour(v: string | null): Colour | undefined {
     : undefined;
 }
 
-type VoterListRow = {
-  id: bigint;
-  name: string;
-  voterId: string | null;
-  village: string | null;
-  boothNo: number | null;
-  partNo: number | null;
-  srn: number | null;
-  mobile1: string | null;
-  colourCode: Colour;
-  voted: boolean;
-  starVoter: boolean;
-  dead: boolean;
-  updatedAt: Date;
-
-  // added for Home table
-  fatherName: string | null;
-  wardNo: number | null;
-};
-
 // ---------- handlers ----------
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);

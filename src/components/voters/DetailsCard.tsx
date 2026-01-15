@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, MapPin, Phone, Award, User } from "lucide-react";
+import { MapPin, Phone, User } from "lucide-react";
 import type { Voter } from "@/types/voter";
 
 // ---- Theme tokens (match table/modals) ----

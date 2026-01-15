@@ -1,7 +1,7 @@
 ///Users/xeoren/voter-web/src/components/shared/Modal.tsx
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 

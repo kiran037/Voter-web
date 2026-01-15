@@ -1,10 +1,8 @@
-
-
 // app/api/voters/import/route.ts
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { Buffer } from "node:buffer";
-import * as XLSX from "xlsx";
+import { Buffer } from "node:buffer"; // Explicit import ensures Buffer.from works
+import ExcelJS from "exceljs";
 import { prisma } from "@/lib/prisma";
 import { getAuthedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/role";
@@ -42,6 +40,7 @@ function escCsvSplit(line: string): string[] {
   out.push(cur);
   return out;
 }
+
 function parseCsv(buf: Buffer): StringRecord[] {
   const text = buf.toString("utf8").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = text.split("\n").filter(l => l.trim().length > 0);
@@ -56,11 +55,53 @@ function parseCsv(buf: Buffer): StringRecord[] {
   }
   return rows;
 }
-function parseXlsx(buf: Buffer): UnknownRecord[] {
-  const wb = XLSX.read(buf, { type: "buffer" });
-  const first = wb.SheetNames?.[0];
-  if (!first) return [];
-  return XLSX.utils.sheet_to_json(wb.Sheets[first], { defval: "" }); // keep blanks as ""
+
+async function parseXlsx(buf: Buffer): Promise<UnknownRecord[]> {
+  const workbook = new ExcelJS.Workbook();
+  
+  // FIXED: Cast to 'any' to resolve the "Buffer<ArrayBufferLike> vs Buffer" type conflict
+  await workbook.xlsx.load(buf as any);
+
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) return [];
+
+  const rows: UnknownRecord[] = [];
+  
+  // FIXED: declared as const to fix eslint "prefer-const" error
+  const headers: string[] = [];
+
+  worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    // ExcelJS rows are 1-based. Row 1 is header.
+    if (rowNumber === 1) {
+      row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        headers[colNumber] = String(cell.value ?? "").trim();
+      });
+    } else {
+      const rec: UnknownRecord = {};
+      row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        const header = headers[colNumber];
+        if (header) {
+          let val = cell.value;
+          
+          // Handle ExcelJS rich text or formula results
+          if (val && typeof val === 'object') {
+            if ('text' in val) val = (val as any).text;
+            else if ('result' in val) val = (val as any).result;
+          }
+          
+          // Convert Dates to ISO string
+          if (val instanceof Date) {
+             val = val.toISOString();
+          }
+
+          rec[header] = val;
+        }
+      });
+      rows.push(rec);
+    }
+  });
+
+  return rows;
 }
 
 /* -------- coercers -------- */
@@ -129,7 +170,6 @@ function mapRow(row: UnknownRecord) {
 
   const relationToHead = toFamilyRoleEnum(pickInsensitive(row, ["relationToHead","role"], ""));
 
-  // Head reference can come from: headId (numeric or EPIC string) or headEpic
   const headIdRaw  = String(pickInsensitive(row, ["headId","head_id"], "")).trim();
   const headEpic   = String(pickInsensitive(row, ["headEpic","head_epic"], "")).trim();
   const headIdNum  = toBigIntOrNull(headIdRaw);
@@ -166,7 +206,7 @@ function mapRow(row: UnknownRecord) {
       familyId: (String(pickInsensitive(row, ["familyId","family","family_code","janAadhaar","jan_aadhaar","rationCard","ration_card","family_id"], "")).trim() || null),
       familyIdType: toFamilyIdTypeEnum(pickInsensitive(row, ["familyIdType","family_id_type","id_type"], "")),
       relationToHead,
-      headId: null as bigint | null, // set in phase 2
+      headId: null as bigint | null,
       dob: null as Date | null,
     },
     headHint,
@@ -219,12 +259,19 @@ export async function POST(req: NextRequest) {
   // 3) parse
   const filename = file.name || "upload";
   const buf = Buffer.from(await file.arrayBuffer());
+  
   let rows: UnknownRecord[] = [];
   try {
-    rows = /\.(xlsx|xlsm|xls)$/i.test(filename) ? parseXlsx(buf) : parseCsv(buf);
+    if (/\.(xlsx|xlsm|xls)$/i.test(filename)) {
+      rows = await parseXlsx(buf);
+    } else {
+      rows = parseCsv(buf);
+    }
   } catch (e: any) {
+    console.error("Parse Error:", e);
     return NextResponse.json({ error: e?.message || "parse failed" }, { status: 400 });
   }
+  
   if (rows.length === 0) {
     return NextResponse.json({ rowCount: 0, successCount: 0, failedCount: 0, errors: [] });
   }
@@ -235,7 +282,7 @@ export async function POST(req: NextRequest) {
   /* -------- Phase 1: upsert voters, collect ids -------- */
   const mapped: MappedRow[] = rows.map(mapRow);
   const run = limiter(CONCURRENCY);
-  const epicToId = new Map<string, bigint>(); // EPIC->created id (for same file references)
+  const epicToId = new Map<string, bigint>(); 
   const createdList: Array<{ id: bigint; rel: FamilyRole | null; headHint: { numeric: bigint | null; epic: string | null } }> = [];
 
   let successCount = 0;
@@ -257,7 +304,6 @@ export async function POST(req: NextRequest) {
           }
           try {
             const baseData = { ...m.voter };
-            // head will be set in phase 2
             delete (baseData as any).headId;
 
             let createdId: bigint;
@@ -312,13 +358,10 @@ export async function POST(req: NextRequest) {
           }
 
           let target: bigint | null = null;
-
-          // Numeric head id takes precedence if present
           if (headHint.numeric) {
             target = headHint.numeric;
           } else if (headHint.epic) {
             const epic = headHint.epic.trim().toUpperCase();
-            // try in-batch map first, then DB
             target =
               epicToId.get(epic) ??
               (await (async () => {
@@ -334,7 +377,7 @@ export async function POST(req: NextRequest) {
             await prisma.voter.update({ where: { id }, data: { headId: target } });
           }
         } catch {
-          /* ignore bad references */
+          // ignore bad refs
         }
       })
     );

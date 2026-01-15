@@ -233,8 +233,6 @@ async function buildVoterPdf(
     };
 
     const tableW = W - 2 * Mx;
-    const th = 16;
-    const trH = 16;
 
     const c0 = 22;
     const c1 = 150;
